@@ -1,23 +1,41 @@
 # Orbit Wars — Claude Code Workflow
 
-## Three-Window System
+## Unified Cycle (recommended)
 
-Use three separate Claude Code sessions (or `/clear` between roles) to maintain context isolation.
+Run the full cycle from a single chat. Claude acts as orchestrator and spawns all subagents automatically.
 
-### Window 1: Planner
+```
+/orbit-cycle
+```
+
+Describe what you want. The orchestrator will:
+1. Decide if research is needed → spawn `researcher` → **ask your approval**
+2. Spawn `planner` with task + research → **ask your approval**
+3. Spawn `implementer` with approved plan → show you the summary
+4. Spawn `reviewer` → show you the verdict
+
+You review and approve at each phase. Nothing moves forward without your OK.
+
+---
+
+## Manual Roles (advanced / debugging)
+
+Use these when you want to run a single phase in isolation, or when debugging a specific role's output.
+
+### Manual Planning
 ```
 /planner-start
 ```
 Describe the task. Receive a structured plan. Copy it.
 
-### Window 2: Implementer
+### Manual Implementation
 ```
 /clear
 /implementer-start
 ```
 Paste the plan. The implementer executes it. Copy the implementation summary.
 
-### Window 3: Reviewer
+### Manual Review
 ```
 /clear
 /reviewer-start
