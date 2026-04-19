@@ -33,6 +33,8 @@ class GameState:
     my_planets: list
     enemy_planets: list
     neutral_planets: list
+    comet_planet_ids: list = field(default_factory=list)
+    initial_planets: list = field(default_factory=list)
 
 
 def parse_obs(obs) -> GameState:
@@ -58,6 +60,12 @@ def parse_obs(obs) -> GameState:
     enemy_planets = [p for p in planets if p.owner != player and p.owner != -1]
     neutral_planets = [p for p in planets if p.owner == -1]
 
+    comet_planet_ids = obs.get("comet_planet_ids", [])
+    initial_planets_raw = obs.get("initial_planets", [])
+    initial_planets = []
+    for p in initial_planets_raw:
+        initial_planets.append(Planet(id=p[0], owner=p[1], x=p[2], y=p[3], radius=p[4], ships=p[5], production=p[6]))
+
     return GameState(
         step=step,
         player=player,
@@ -67,4 +75,6 @@ def parse_obs(obs) -> GameState:
         my_planets=my_planets,
         enemy_planets=enemy_planets,
         neutral_planets=neutral_planets,
+        comet_planet_ids=comet_planet_ids,
+        initial_planets=initial_planets,
     )
