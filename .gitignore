@@ -4,6 +4,11 @@ __pycache__/
 experiments/*/
 !experiments/.gitkeep
 
+# Virtual environments
+.venv/
+venv/
+env/
+
 .pytest_cache/
 .claude/settings.local.json
 .env
