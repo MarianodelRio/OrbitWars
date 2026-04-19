@@ -1,4 +1,4 @@
-from training.reward_shaping import shaped_reward
+from training.rewards.shaped import shaped_reward
 
 def self_play_loop(bot_factory, n_episodes=10, steps=200):
     """

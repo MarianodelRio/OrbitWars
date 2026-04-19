@@ -10,3 +10,5 @@ experiments/*/
 *.egg-info/
 dist/
 build/
+tournament/results/*
+!tournament/results/.gitkeep
