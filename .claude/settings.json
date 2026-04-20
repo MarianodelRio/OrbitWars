@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git -C /home/mariano/Desktop/OrbitWars log --oneline -5)",
+      "Bash(git -C /home/mariano/Desktop/OrbitWars show --stat HEAD)",
+      "Bash(git -C /home/mariano/Desktop/OrbitWars status --short bots/orbital_kineticist/)"
+    ]
+  }
+}
