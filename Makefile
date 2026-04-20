@@ -17,7 +17,7 @@ tournament:
 	$(PYTHON) scripts/tournament/run.py
 
 submit:
-	@set -a && . .env && set +a && $(PYTHON) scripts/submission/run.py
+	@set -a && . ./.env && set +a && $(PYTHON) scripts/submission/run.py
 
 test:
 	$(PYTHON) -m pytest tests/ -v

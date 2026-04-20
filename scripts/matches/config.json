@@ -1,9 +1,9 @@
 {
-  "mode": "single",
-  "bot1": "bots.heuristic.sniper:agent_fn",
+  "mode": "evaluate",
+  "bot1": "bots.heuristic.oracle_sniper:agent_fn",
   "bot2": "bots.heuristic.baseline:agent_fn",
   "steps": 500,
-  "n_matches": 1,
+  "n_matches": 5,
   "render": false,
   "output": "game.html",
   "save_log": true
