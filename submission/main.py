@@ -4,43 +4,72 @@ Do not edit manually. Re-run the script to update.
 """
 import math
 
+class OracleSniperBot:
+    def __init__(self):
+        self.step = 0
+        self.targeted = {}
+
+    @staticmethod
+    def _fleet_speed(ships):
+        return 1.0 + 5.0 * (math.log(max(ships, 1)) / math.log(1000)) ** 1.5
+
+    def _score(self, mine, target):
+        dist = math.hypot(mine[2] - target[2], mine[3] - target[3])
+        eta = dist / self._fleet_speed(mine[5])
+        garrison = target[5]
+        production = target[6]
+        if target[1] == -1:
+            return production / (eta + garrison + 1)
+        return production / ((1 + production) * eta + garrison + 1)
+
+    def _clean_targeted(self, my_planets_set, current_step):
+        for planet_id, turn_sent in list(self.targeted.items()):
+            if planet_id in my_planets_set or current_step - turn_sent > 60:
+                del self.targeted[planet_id]
+
+    def act(self, obs, config=None):
+        self.step += 1
+
+        player = obs.get("player", obs["player"] if isinstance(obs, dict) else obs.player)
+        raw_planets = obs.get("planets", obs["planets"] if isinstance(obs, dict) else obs.planets)
+
+        my_planets = [p for p in raw_planets if p[1] == player]
+        targets = [p for p in raw_planets if p[1] != player]
+
+        if not my_planets or not targets:
+            return []
+
+        my_planet_ids = {p[0] for p in my_planets}
+        self._clean_targeted(my_planet_ids, self.step)
+
+        available_targets = [p for p in targets if p[0] not in self.targeted]
+
+        moves = []
+        targeted_this_turn = set()
+
+        for mine in my_planets:
+            if mine[5] <= 5:
+                continue
+
+            candidates = [p for p in available_targets if p[0] not in targeted_this_turn]
+            if not candidates:
+                continue
+
+            best = max(candidates, key=lambda t: self._score(mine, t))
+            ships_needed = best[5] + 1
+
+            if mine[5] < ships_needed:
+                continue
+
+            angle = math.atan2(best[3] - mine[3], best[2] - mine[2])
+            moves.append([mine[0], angle, ships_needed])
+            targeted_this_turn.add(best[0])
+            self.targeted[best[0]] = self.step
+
+        return moves
+
+_bot = OracleSniperBot()
+
 def agent(obs, config=None):
-    self.step += 1
+    return _bot.act(obs, config)
 
-    player = obs.get("player", obs["player"] if isinstance(obs, dict) else obs.player)
-    raw_planets = obs.get("planets", obs["planets"] if isinstance(obs, dict) else obs.planets)
-
-    my_planets = [p for p in raw_planets if p[1] == player]
-    targets = [p for p in raw_planets if p[1] != player]
-
-    if not my_planets or not targets:
-        return []
-
-    my_planet_ids = {p[0] for p in my_planets}
-    self._clean_targeted(my_planet_ids, self.step)
-
-    available_targets = [p for p in targets if p[0] not in self.targeted]
-
-    moves = []
-    targeted_this_turn = set()
-
-    for mine in my_planets:
-        if mine[5] <= 5:
-            continue
-
-        candidates = [p for p in available_targets if p[0] not in targeted_this_turn]
-        if not candidates:
-            continue
-
-        best = max(candidates, key=lambda t: self._score(mine, t))
-        ships_needed = best[5] + 1
-
-        if mine[5] < ships_needed:
-            continue
-
-        angle = math.atan2(best[3] - mine[3], best[2] - mine[2])
-        moves.append([mine[0], angle, ships_needed])
-        targeted_this_turn.add(best[0])
-        self.targeted[best[0]] = self.step
-
-    return moves

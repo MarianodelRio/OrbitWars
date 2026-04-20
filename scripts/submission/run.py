@@ -12,6 +12,7 @@ import importlib
 import inspect
 import json
 import os
+import re
 import subprocess
 import sys
 import textwrap
@@ -45,11 +46,25 @@ def package_bot(bot_spec: str) -> None:
         source = source.replace("def agent_fn(", "def agent(", 1)
         body = source
     else:
-        act_source = inspect.getsource(type(fn).act)
-        lines = act_source.splitlines()
-        body_lines = lines[1:]
-        body = textwrap.dedent("\n".join(body_lines))
-        body = "def agent(obs, config=None):\n" + textwrap.indent(body, "    ")
+        class_name = type(fn).__name__
+        class_source = inspect.getsource(type(fn))
+        class_source = "\n".join(
+            line for line in class_source.splitlines()
+            if not (line.strip().startswith("from bots.") or line.strip().startswith("import bots."))
+        )
+        class_source = re.sub(
+            r"class " + re.escape(class_name) + r"\s*\(Bot\)\s*:",
+            "class " + class_name + ":",
+            class_source,
+        )
+        body = (
+            class_source
+            + "\n\n"
+            + f"_bot = {class_name}()"
+            + "\n\n"
+            + "def agent(obs, config=None):\n"
+            + "    return _bot.act(obs, config)\n"
+        )
 
     with open(SUBMISSION_PATH, "w") as f:
         f.write(HEADER + "\n" + body + "\n")

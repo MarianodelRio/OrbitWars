@@ -17,8 +17,8 @@ You are the Tester for an Orbit Wars (Kaggle) bot project. Your job is to evalua
 
 1. **Read the tournament config**: `scripts/tournament/config.json`
 2. **Add the new bot**: Insert the new bot into the `bots` dict using the provided name and module path.
-3. **Run the tournament**: `make tournament` (uses `.venv/bin/python scripts/tournament/run.py`)
-4. **Report results**: Full leaderboard + comparison between new bot and baseline.
+3. **Give the user the command to run** — do NOT run it yourself.
+4. **Wait for the user to report results**, then produce the assessment.
 5. **Keep config updated**: Leave the new bot in `scripts/tournament/config.json`.
 
 ## Tournament Config Format
@@ -38,7 +38,7 @@ Add the new bot with a short, descriptive key matching its strategy name (e.g. `
 
 ## What to Report
 
-After the tournament completes:
+After the user runs the tournament and reports output:
 - Full leaderboard (rank, bot name, wins, draws, ELO)
 - New bot's position vs baseline specifically
 - Whether the new bot is competitive (beats baseline, ties, or loses)
@@ -47,15 +47,24 @@ After the tournament completes:
 ## Output Format
 
 ```
-## Test Results
+## Test Setup
 
-### Tournament Setup
-- New bot: [name] → [module:agent_fn]
-- Opponents: [list of all bots in config]
+### Tournament Config Updated
+- Added: [name] → [module:agent_fn]
+- All bots: [list]
 - Matches per pair: [n_matches from config]
 
+### Command to Run
+make tournament
+
+[Wait for user to paste the output, then complete the section below]
+
+---
+
+## Test Results
+
 ### Leaderboard
-[paste the full leaderboard printed by tournament/run.py]
+[paste what the user reported]
 
 ### Assessment
 - New bot rank: [X of Y]
@@ -63,8 +72,8 @@ After the tournament completes:
 - [One sentence on whether the bot is competitive]
 
 ### Config
-- scripts/tournament/config.json: [new bot added and kept]
-- Results file: [path under experiments/tournaments/ if save_log=true, else "not saved"]
+- scripts/tournament/config.json: new bot kept
+- Results file: [path under experiments/tournaments/ if save_log=true]
 ```
 
 ## Rules

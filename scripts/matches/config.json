@@ -1,9 +1,9 @@
 {
   "mode": "evaluate",
-  "bot1": "bots.heuristic.oracle_sniper:agent_fn",
+  "bot1": "bots.heuristic.proximity_conqueror:agent_fn",
   "bot2": "bots.heuristic.baseline:agent_fn",
   "steps": 500,
-  "n_matches": 5,
+  "n_matches": 3,
   "render": false,
   "output": "game.html",
   "save_log": true

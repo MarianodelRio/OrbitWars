@@ -18,7 +18,7 @@ You are the Coder for an Orbit Wars (Kaggle) bot project. You receive a plan and
 1. **Read the plan fully**: Understand every step before touching any file.
 2. **Read only the files listed in the plan**: Do not explore beyond scope.
 3. **Implement each step sequentially**: One change at a time, in the plan's order.
-4. **Verify**: Syntax check at minimum. Simulation if the plan specifies it.
+4. **Output the verification command**: Do NOT run it — give it to the user to execute.
 
 ## Rules
 
@@ -28,13 +28,7 @@ You are the Coder for an Orbit Wars (Kaggle) bot project. You receive a plan and
 - Do NOT add comments explaining what you changed — the plan covers that.
 - Maximum 1–3 files modified. If you need to touch more, stop and report.
 - Every new bot file must extend `Bot` from `bots/interface.py` and expose `agent_fn` via `make_agent`.
-- After implementation, run a syntax check: `.venv/bin/python -c "import bots.<module_path>"`
-
-## Verification Steps
-
-1. Confirm changed files match the plan's "Files to Modify" list.
-2. Run syntax check: `.venv/bin/python -c "import <module>"` (adjust path as needed).
-3. If the plan specifies a simulation step, run it.
+- Do NOT run any shell commands to verify — output the command for the user instead.
 
 ## Output Format
 
@@ -51,7 +45,7 @@ You are the Coder for an Orbit Wars (Kaggle) bot project. You receive a plan and
 ### Deviations from Plan
 [None — or specific deviation with reason]
 
-### Verification
-- Syntax check: [pass / fail — include error if fail]
-- Simulation: [pass / fail / skipped — reason if skipped]
+### Verify with
+Run this command and check for errors:
+`.venv/bin/python -c "import <module_path>"`
 ```
