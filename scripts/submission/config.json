@@ -1,6 +1,6 @@
 {
-  "bot": "bots.heuristic.oracle_sniper:agent_fn",
-  "message": "oracle sniper v1",
+  "bot": "bots.orbital_kineticist:agent_fn",
+  "message": "orbital kineticist v1",
   "competition": "orbit-wars",
   "save_log": true
 }

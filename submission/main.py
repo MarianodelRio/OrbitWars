@@ -4,71 +4,161 @@ Do not edit manually. Re-run the script to update.
 """
 import math
 
-class OracleSniperBot:
-    def __init__(self):
-        self.step = 0
-        self.targeted = {}
+from math import log, hypot, atan2, cos, sin, pi
 
-    @staticmethod
-    def _fleet_speed(ships):
-        return 1.0 + 5.0 * (math.log(max(ships, 1)) / math.log(1000)) ** 1.5
 
-    def _score(self, mine, target):
-        dist = math.hypot(mine[2] - target[2], mine[3] - target[3])
-        eta = dist / self._fleet_speed(mine[5])
-        garrison = target[5]
+def fleet_speed(ships):
+    return 1.0 + 5.0 * (log(max(ships, 1)) / log(1000)) ** 1.5
+
+
+def _seg_point_dist(ax, ay, bx, by, px, py):
+    """Minimum distance from point (px, py) to segment (ax,ay)-(bx,by)."""
+    dx, dy = bx - ax, by - ay
+    len_sq = dx * dx + dy * dy
+    if len_sq == 0:
+        return hypot(px - ax, py - ay)
+    t = max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / len_sq))
+    proj_x = ax + t * dx
+    proj_y = ay + t * dy
+    return hypot(px - proj_x, py - proj_y)
+
+
+def blocks_sun(origin, intercept_point):
+    return _seg_point_dist(
+        origin[0], origin[1],
+        intercept_point[0], intercept_point[1],
+        50.0, 50.0
+    ) < 10.5
+
+
+def _planet_is_static(planet):
+    return hypot(planet[2] - 50, planet[3] - 50) + planet[4] >= 50
+
+
+def get_intercept(origin_pos, target_planet, num_ships, angular_velocity):
+    speed = fleet_speed(num_ships)
+    ox, oy = origin_pos
+
+    if _planet_is_static(target_planet):
+        tx, ty = target_planet[2], target_planet[3]
+        dist = hypot(tx - ox, ty - oy)
+        eta = dist / speed if speed > 0 else 999
+        return (tx, ty), eta
+
+    current_angle = math.atan2(target_planet[3] - 50, target_planet[2] - 50)
+    orbit_radius = math.hypot(target_planet[2] - 50, target_planet[3] - 50)
+    planet_radius = target_planet[4]
+
+    for t in range(1, 151):
+        angle_t = current_angle + angular_velocity * t
+        tx = 50 + orbit_radius * cos(angle_t)
+        ty = 50 + orbit_radius * sin(angle_t)
+        dist = hypot(tx - ox, ty - oy)
+        eta = dist / speed if speed > 0 else 999
+        if abs(eta - t) < 0.5:
+            return (tx, ty), float(t)
+
+    # Fallback to current position
+    tx, ty = target_planet[2], target_planet[3]
+    dist = hypot(tx - ox, ty - oy)
+    eta = dist / speed if speed > 0 else 999
+    return (tx, ty), eta
+
+def select_target(source, candidates, player, angular_velocity):
+    origin_pos = (source[2], source[3])
+    source_ships = source[5]
+    source_production = source[6]
+
+    best_score = -1.0
+    best_target = None
+    best_intercept = None
+    best_ships_to_send = 0
+
+    for target in candidates:
+        if target[0] == source[0]:
+            continue
+
+        intercept_point, eta = get_intercept(
+            origin_pos, target, source_ships, angular_velocity
+        )
+
+        owner = target[1]
+        ships = target[5]
         production = target[6]
-        if target[1] == -1:
-            return production / (eta + garrison + 1)
-        return production / ((1 + production) * eta + garrison + 1)
 
-    def _clean_targeted(self, my_planets_set, current_step):
-        for planet_id, turn_sent in list(self.targeted.items()):
-            if planet_id in my_planets_set or current_step - turn_sent > 60:
-                del self.targeted[planet_id]
+        if owner == -1:
+            future_ships = ships + 1
+        else:
+            future_ships = ships + production * eta
 
+        ships_to_send = int(future_ships * 1.2) + 1
+
+        if ships_to_send < 10:
+            continue
+        if source_ships <= ships_to_send:
+            continue
+
+        score = (production ** 2) / (max(eta, 0.1) * (future_ships + 1))
+
+        dynamic_threshold = source_production / 20.0
+        if score < dynamic_threshold:
+            continue
+        if score < 0.01:
+            continue
+
+        if blocks_sun(origin_pos, intercept_point):
+            continue
+
+        if score > best_score:
+            best_score = score
+            best_target = target
+            best_intercept = intercept_point
+            best_ships_to_send = ships_to_send
+
+    if best_target is None:
+        return None
+
+    return {
+        "target": best_target,
+        "intercept": best_intercept,
+        "ships_to_send": best_ships_to_send,
+    }
+
+class OrbitalKineticistBot:
     def act(self, obs, config=None):
-        self.step += 1
+        if isinstance(obs, dict):
+            obs_dict = obs
+        else:
+            obs_dict = obs.__dict__ if hasattr(obs, '__dict__') else dict(obs)
 
-        player = obs.get("player", obs["player"] if isinstance(obs, dict) else obs.player)
-        raw_planets = obs.get("planets", obs["planets"] if isinstance(obs, dict) else obs.planets)
+        planets = obs_dict.get("planets", [])
+        player = obs_dict.get("player", 1)
+        angular_velocity = obs_dict.get("angular_velocity", 0.035)
 
-        my_planets = [p for p in raw_planets if p[1] == player]
-        targets = [p for p in raw_planets if p[1] != player]
+        my_planets = [p for p in planets if p[1] == player]
+        candidate_targets = [p for p in planets if p[1] != player]
 
-        if not my_planets or not targets:
+        if not my_planets or not candidate_targets:
             return []
 
-        my_planet_ids = {p[0] for p in my_planets}
-        self._clean_targeted(my_planet_ids, self.step)
-
-        available_targets = [p for p in targets if p[0] not in self.targeted]
-
-        moves = []
-        targeted_this_turn = set()
-
-        for mine in my_planets:
-            if mine[5] <= 5:
+        actions = []
+        for source in my_planets:
+            if source[5] <= 10:
                 continue
 
-            candidates = [p for p in available_targets if p[0] not in targeted_this_turn]
-            if not candidates:
+            result = select_target(
+                source, candidate_targets, player, angular_velocity
+            )
+            if result is None:
                 continue
 
-            best = max(candidates, key=lambda t: self._score(mine, t))
-            ships_needed = best[5] + 1
+            ix, iy = result["intercept"]
+            angle = atan2(iy - source[3], ix - source[2])
+            actions.append([source[0], angle, result["ships_to_send"]])
 
-            if mine[5] < ships_needed:
-                continue
+        return actions
 
-            angle = math.atan2(best[3] - mine[3], best[2] - mine[2])
-            moves.append([mine[0], angle, ships_needed])
-            targeted_this_turn.add(best[0])
-            self.targeted[best[0]] = self.step
-
-        return moves
-
-_bot = OracleSniperBot()
+_bot = OrbitalKineticistBot()
 
 def agent(obs, config=None):
     return _bot.act(obs, config)

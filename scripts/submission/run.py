@@ -8,6 +8,7 @@ Fields:
   message     — submission message shown on Kaggle
   competition — Kaggle competition slug (default: orbit-wars)
 """
+import ast
 import importlib
 import inspect
 import json
@@ -36,6 +37,54 @@ import math
 '''
 
 
+def _relative_imports(source_text: str) -> list[str]:
+    """Return module names from relative imports (e.g. 'predictor' from 'from .predictor import ...')."""
+    try:
+        tree = ast.parse(source_text)
+    except SyntaxError:
+        return []
+    return [
+        node.module
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.level > 0 and node.module
+    ]
+
+
+def _collect_inline_modules(package_dir: str, entry_file: str) -> list[tuple[str, str]]:
+    """Return (name, source) pairs for all relative dependencies in topological order."""
+    visited: set[str] = set()
+    order: list[tuple[str, str]] = []
+
+    def visit(module_name: str) -> None:
+        if module_name in visited:
+            return
+        visited.add(module_name)
+        filepath = os.path.join(package_dir, module_name + ".py")
+        if not os.path.exists(filepath):
+            return
+        with open(filepath) as f:
+            src = f.read()
+        for dep in _relative_imports(src):
+            visit(dep)
+        order.append((module_name, src))
+
+    with open(entry_file) as f:
+        entry_src = f.read()
+    for dep in _relative_imports(entry_src):
+        visit(dep)
+    return order
+
+
+def _strip_relative_imports(source_text: str) -> str:
+    """Remove relative import lines and duplicate stdlib imports from a module source."""
+    lines = [
+        line for line in source_text.splitlines()
+        if not line.strip().startswith("from .")
+        and line.strip() != "import math"
+    ]
+    return "\n".join(lines).strip()
+
+
 def package_bot(bot_spec: str) -> None:
     module_path, attr = bot_spec.rsplit(":", 1)
     module = importlib.import_module(module_path)
@@ -47,18 +96,29 @@ def package_bot(bot_spec: str) -> None:
         body = source
     else:
         class_name = type(fn).__name__
-        class_source = inspect.getsource(type(fn))
+        cls = type(fn)
+
+        # Collect and inline relative-import dependencies
+        bot_file = inspect.getfile(cls)
+        package_dir = os.path.dirname(bot_file)
+        inline_modules = _collect_inline_modules(package_dir, bot_file)
+        inline_blocks = [_strip_relative_imports(src) for _, src in inline_modules]
+
+        class_source = inspect.getsource(cls)
         class_source = "\n".join(
             line for line in class_source.splitlines()
             if not (line.strip().startswith("from bots.") or line.strip().startswith("import bots."))
         )
         class_source = re.sub(
-            r"class " + re.escape(class_name) + r"\s*\(Bot\)\s*:",
+            r"class " + re.escape(class_name) + r"\s*\(\w+\)\s*:",
             "class " + class_name + ":",
             class_source,
         )
+
         body = (
-            class_source
+            "\n\n".join(inline_blocks)
+            + ("\n\n" if inline_blocks else "")
+            + class_source
             + "\n\n"
             + f"_bot = {class_name}()"
             + "\n\n"
