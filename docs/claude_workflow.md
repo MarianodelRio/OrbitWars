@@ -1,46 +1,58 @@
 # Orbit Wars — Claude Code Workflow
 
-## Unified Cycle (recommended)
+## Standard Workflows
 
-Run the full cycle from a single chat. Claude acts as orchestrator and spawns all subagents automatically.
-
+### Create a new bot
 ```
-/orbit-cycle
+/research      ← develop and formalize the idea (conversational)
+/new-bot       ← paste the Research Summary → plan → code → review → tournament
 ```
 
-Describe what you want. The orchestrator will:
-1. Decide if research is needed → spawn `researcher` → **ask your approval**
-2. Spawn `planner` with task + research → **ask your approval**
-3. Spawn `implementer` with approved plan → show you the summary
-4. Spawn `reviewer` → show you the verdict
+### Implement a feature or improvement
+```
+/research      ← develop and formalize the idea (conversational)
+/new-feature   ← paste the Research Summary → plan → code → review
+```
 
-You review and approve at each phase. Nothing moves forward without your OK.
+### Debug a specific issue
+```
+/orbit-debug   ← describe the symptom, get a root cause report
+```
+
+### Evaluate bot performance
+```
+/orbit-eval    ← run N matches between two bots, get win rates
+```
 
 ---
 
-## Manual Roles (advanced / debugging)
+## The Research Flow
 
-Use these when you want to run a single phase in isolation, or when debugging a specific role's output.
+`/research` is a conversation, not a pipeline. You describe your idea and Claude helps you develop it — asking questions, exploring tradeoffs, looking up algorithms. When you're satisfied, say "generate the summary" and you'll get a formal **Research Summary** to paste into `/new-bot` or `/new-feature`.
 
-### Manual Planning
-```
-/planner-start
-```
-Describe the task. Receive a structured plan. Copy it.
+---
 
-### Manual Implementation
-```
-/clear
-/implementer-start
-```
-Paste the plan. The implementer executes it. Copy the implementation summary.
+## Checkpoints in Every Pipeline
 
-### Manual Review
-```
-/clear
-/reviewer-start
-```
-Paste the plan + implementation summary. Receive a review verdict.
+Both `/new-bot` and `/new-feature` stop and wait for your approval at:
+1. **After the plan** — you review and approve before any code is written
+2. **After coding** — you see the implementation summary before review runs
+3. **After review** — you see the verdict (and test results for new bots)
+
+For `/new-bot`, there's a 4th phase: the **tester** runs a full round-robin tournament and shows the new bot's ELO and win rates against all existing bots.
+
+---
+
+## Agent Roles
+
+| Agent | Does | Doesn't |
+|-------|------|---------|
+| `researcher` | Reads code, searches web, synthesizes findings | Write code |
+| `planner` | Produces step-by-step plans from Research Summary | Write code |
+| `coder` | Executes the plan exactly | Redesign or extend scope |
+| `reviewer` | Checks compliance, runs tests + match (new bots) | Fix issues |
+| `tester` | Runs tournament, reports ELO leaderboard | Modify bot code |
+
 
 ---
 

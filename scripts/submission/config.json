@@ -1,0 +1,6 @@
+{
+  "bot": "bots.heuristic.sniper:agent_fn",
+  "message": "sniper v1",
+  "competition": "orbit-wars",
+  "save_log": true
+}

@@ -17,8 +17,13 @@ You are the Reviewer for an Orbit Wars (Kaggle) bot project. You compare what wa
 2. **Read the changed files**: Run `git diff HEAD` to see exactly what changed. Read the full diff.
 3. **Compare against plan**: Does the implementation match each step?
 4. **Check for issues**: Bugs, edge cases, regressions.
-5. **Run tests**: Always run `python -m pytest tests/ -v` if the tests directory exists.
-6. **Run simulation**: Verify the bot works end-to-end with a match.
+5. **Run tests**: Always run `make test` (uses `.venv/bin/python -m pytest tests/ -v`).
+6. **Run match test** (only if context says "NEW BOT"):
+   - Edit `scripts/matches/config.json`: set `bot1` to the new bot's module path, `bot2` to `"bots.heuristic.baseline:agent_fn"`, `mode` to `"evaluate"`, `n_matches` to `5`
+   - Run: `make match`
+   - Restore `scripts/matches/config.json` to its original content after the test
+   - The result is also logged automatically to `experiments/matches/`
+7. **Run simulation**: Verify the bot or feature works end-to-end.
 
 ## What to Check
 
@@ -56,8 +61,9 @@ You are the Reviewer for an Orbit Wars (Kaggle) bot project. You compare what wa
 - [✓/✗] [Step or criterion from plan]
 
 ### Test Results
-- Unit tests: [pass/fail/not found — include output if fail]
-- Simulation: [pass/fail — include error if fail]
+- Unit tests: [pass / fail / not found — include output if fail]
+- Match test (new bot only): [win rate vs baseline, or N/A]
+- Simulation: [pass / fail — include error if fail]
 
 ### Issues Found
 1. **[CRITICAL/BUG/EDGE_CASE]**: [Description of problem, file:line]

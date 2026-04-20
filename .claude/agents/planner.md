@@ -34,8 +34,12 @@ You will always receive a task description. You may also receive a **Research Su
 ## Approach
 [2-3 sentences: the algorithm or technique being implemented, and why. If from Research Summary, say so.]
 
+## Bot Module Path
+[Only if this is a new bot task — exact importable path: e.g. bots.heuristic.aggressive:agent_fn]
+[Omit this section entirely if not a new bot task]
+
 ## Context
-[What the Implementer needs to know about current state — be specific, include line numbers]
+[What the Coder needs to know about current state — be specific, include line numbers]
 
 ## Steps
 1. [Concrete action with file path and what to change]

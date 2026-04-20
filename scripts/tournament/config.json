@@ -1,0 +1,10 @@
+{
+  "n_matches": 3,
+  "steps": 500,
+  "save_log": true,
+  "bots": {
+    "sniper":   "bots.heuristic.sniper:agent_fn",
+    "baseline": "bots.heuristic.baseline:agent_fn",
+    "random":   "bots.heuristic.random_bot:agent_fn"
+  }
+}
