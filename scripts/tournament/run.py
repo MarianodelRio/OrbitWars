@@ -44,6 +44,7 @@ def main():
     n_matches = cfg.get("n_matches", 10)
     steps = cfg.get("steps", 500)
     save_log = cfg.get("save_log", True)
+    self_play = cfg.get("self_play", False)
     bot_registry = cfg["bots"]
 
     agents = {name: load_agent(path) for name, path in bot_registry.items()}
@@ -53,9 +54,11 @@ def main():
     draws = {n: 0 for n in names}
     elo = {n: 1000.0 for n in names}
     matchups = []
+    self_play_results = []
 
     print(f"Tournament: {len(names)} bots, {n_matches} matches per pair, {steps} steps\n")
 
+    print("[Round-robin]")
     for name_a, name_b in combinations(names, 2):
         print(f"  {name_a} vs {name_b} ...", end=" ", flush=True)
         result = evaluate(agents[name_a], agents[name_b], n_matches=n_matches, steps=steps)
@@ -82,6 +85,23 @@ def main():
             "avg_ships_bot2": result["avg_ships"][1],
         })
 
+    if self_play:
+        print("\n[Self-play]")
+        for name in names:
+            print(f"  {name} vs {name} ...", end=" ", flush=True)
+            result = evaluate(agents[name], agents[name], n_matches=n_matches, steps=steps)
+            w_a, w_b = result["wins"]
+            d = result["draws"]
+            print(f"{w_a}-{w_b} (draws: {d})")
+            self_play_results.append({
+                "bot": name,
+                "wins_p0": w_a,
+                "wins_p1": w_b,
+                "draws": d,
+                "avg_ships_p0": result["avg_ships"][0],
+                "avg_ships_p1": result["avg_ships"][1],
+            })
+
     # Leaderboard sorted by ELO
     print(f"\n{'Rank':<6} {'Bot':<20} {'Wins':>6} {'Draws':>6} {'ELO':>7}")
     print("-" * 48)
@@ -102,6 +122,7 @@ def main():
                 for i, name in enumerate(ranking)
             ],
             "matchups": matchups,
+            "self_play": self_play_results,
         }
         with open(out_path, "w") as f:
             json.dump(output, f, indent=2)

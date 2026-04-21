@@ -3,7 +3,23 @@
     "allow": [
       "Bash(git -C /home/mariano/Desktop/OrbitWars log --oneline -5)",
       "Bash(git -C /home/mariano/Desktop/OrbitWars show --stat HEAD)",
-      "Bash(git -C /home/mariano/Desktop/OrbitWars status --short bots/orbital_kineticist/)"
+      "Bash(git -C /home/mariano/Desktop/OrbitWars status --short bots/orbital_kineticist/)",
+      "Bash(make tournament *)",
+      "Bash(.venv/bin/python scripts/submission/run.py)",
+      "Bash(python -c \"import sys; sys.path.insert\\(0, '.'\\); from scripts.submission import run; run.package_bot\\('bots.scoring.bot:agent_fn'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('submission/main.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(python scripts/matches/run.py)",
+      "Bash(git -C /home/mariano/Desktop/OrbitWars show HEAD:submission/main.py)",
+      "Bash(xxd)",
+      "Bash(.venv/bin/python -m pytest tests/ -v)",
+      "Bash(python3 -c \"import h5py; print\\('h5py OK'\\)\")",
+      "Bash(python3 -c \"import pyarrow; print\\('pyarrow OK'\\)\")",
+      "Bash(python3 -c \"import pandas; print\\('pandas OK'\\)\")",
+      "Bash(python3 -c \"import msgpack; print\\('msgpack OK'\\)\")",
+      "Bash(python3 -c \"import numpy; print\\('numpy OK'\\)\")"
+    ],
+    "additionalDirectories": [
+      "/home/mariano/Desktop/OrbitWars/bots"
     ]
   }
 }

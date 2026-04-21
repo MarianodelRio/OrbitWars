@@ -29,29 +29,57 @@ def main():
     mode = cfg.get("mode", "single")
     steps = cfg.get("steps", 500)
     n_matches = cfg.get("n_matches", 1)
-    render = cfg.get("render", False)
-    output = cfg.get("output", "game.html")
     save_log = cfg.get("save_log", True)
 
-    if mode == "single" or n_matches == 1:
-        result = run_match(bot1, bot2, steps=steps, render=render, output_file=output)
+    if mode == "single":
         b1 = cfg["bot1"].split(":")[0].split(".")[-1]
         b2 = cfg["bot2"].split(":")[0].split(".")[-1]
-        winner_name = b1 if result["winner"] == 0 else b2 if result["winner"] == 1 else None
-        print(f"Winner:  {winner_name if winner_name else 'Draw'}")
-        print(f"Rewards: P0={result['rewards'][0]:.0f}  P1={result['rewards'][1]:.0f}")
-        print(f"Steps:   {result['steps']}")
-        if render:
-            print(f"HTML:    {output}")
+
+        match_logs = []
+        wins_b1 = 0
+        wins_b2 = 0
+        draws = 0
+        for i in range(1, n_matches + 1):
+            result = run_match(bot1, bot2, steps=steps)
+
+            if result["winner"] == 0:
+                winner_name = b1
+                wins_b1 += 1
+            elif result["winner"] == 1:
+                winner_name = b2
+                wins_b2 += 1
+            else:
+                winner_name = "Draw"
+                draws += 1
+
+            print(
+                f"Match {i}/{n_matches}  ->  {winner_name}"
+                f"  (P0={result['rewards'][0]:.0f}"
+                f"  P1={result['rewards'][1]:.0f}"
+                f"  steps={result['steps']})"
+            )
+            match_logs.append({
+                "match": i,
+                "winner": winner_name,
+                "rewards": [float(r) for r in result["rewards"]],
+                "steps": result["steps"],
+            })
+
+        print("-" * 48)
+        print(f"{b1} {wins_b1} \u2013 {wins_b2} {b2}  (draws: {draws})")
 
         if save_log:
             path = log_experiment("matches", {
                 "mode": "single",
-                "bot1": cfg["bot1"], "bot2": cfg["bot2"],
-                "winner": cfg["bot1"] if result["winner"] == 0
-                          else cfg["bot2"] if result["winner"] == 1 else None,
-                "rewards": [float(r) for r in result["rewards"]],
-                "steps": result["steps"],
+                "bot1": cfg["bot1"],
+                "bot2": cfg["bot2"],
+                "n_matches": n_matches,
+                "matches": match_logs,
+                "summary": {
+                    "wins_bot1": wins_b1,
+                    "wins_bot2": wins_b2,
+                    "draws": draws,
+                },
             }, label=f"{b1}_vs_{b2}")
             print(f"Log:     {path}")
 

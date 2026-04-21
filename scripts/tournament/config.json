@@ -2,6 +2,7 @@
   "n_matches": 5,
   "steps": 500,
   "save_log": true,
+  "self_play": false,
   "bots": {
     "sniper":               "bots.heuristic.sniper:agent_fn",
     "baseline":             "bots.heuristic.baseline:agent_fn",

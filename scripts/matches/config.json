@@ -1,10 +1,8 @@
 {
-  "mode": "evaluate",
+  "mode": "single",
   "bot1": "bots.heuristic.proximity_conqueror:agent_fn",
   "bot2": "bots.heuristic.baseline:agent_fn",
   "steps": 500,
   "n_matches": 3,
-  "render": false,
-  "output": "game.html",
   "save_log": true
 }
