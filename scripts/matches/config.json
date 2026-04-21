@@ -1,8 +1,9 @@
 {
   "mode": "single",
-  "bot1": "bots.heuristic.proximity_conqueror:agent_fn",
+  "bot1": "bots.scoring.bot:agent_fn",
   "bot2": "bots.heuristic.baseline:agent_fn",
   "steps": 500,
-  "n_matches": 3,
-  "save_log": true
+  "n_matches": 1,
+  "save_log": true,
+  "save_data": true
 }

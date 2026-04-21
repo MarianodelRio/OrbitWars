@@ -2,6 +2,10 @@ import math
 from bots.interface import Bot
 
 class SniperBot(Bot):
+    @property
+    def name(self) -> str:
+        return "heuristic.sniper"
+
     def act(self, obs, config=None):
         moves = []
         player = obs.get("player", 0) if isinstance(obs, dict) else obs.player

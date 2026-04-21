@@ -4,6 +4,10 @@ from .scoring import score_target, compute_required_ships
 
 
 class ScoringBot(Bot):
+    @property
+    def name(self) -> str:
+        return "scoring.bot"
+
     def act(self, obs, config=None):
         player = obs.get("player", 0) if isinstance(obs, dict) else obs.player
         planets = obs.get("planets", []) if isinstance(obs, dict) else obs.planets

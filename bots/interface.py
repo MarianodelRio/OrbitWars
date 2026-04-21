@@ -1,6 +1,11 @@
 from abc import ABC, abstractmethod
 
 class Bot(ABC):
+    @property
+    @abstractmethod
+    def name(self) -> str:
+        ...
+
     @abstractmethod
     def act(self, obs, config) -> list:
         ...

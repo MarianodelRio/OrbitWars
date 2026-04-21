@@ -8,6 +8,10 @@ from .scoring import select_target
 
 
 class OrbitalKineticistBot(Bot):
+    @property
+    def name(self) -> str:
+        return "orbital_kineticist.bot"
+
     def act(self, obs, config=None):
         if isinstance(obs, dict):
             obs_dict = obs

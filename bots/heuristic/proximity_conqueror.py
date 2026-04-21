@@ -3,6 +3,10 @@ from bots.interface import Bot
 
 
 class ProximityConquerorBot(Bot):
+    @property
+    def name(self) -> str:
+        return "heuristic.proximity_conqueror"
+
     def act(self, obs, config=None):
         player = obs.get("player", 0) if isinstance(obs, dict) else obs.player
         planets = obs.get("planets", []) if isinstance(obs, dict) else obs.planets

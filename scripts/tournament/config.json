@@ -9,5 +9,6 @@
     "oracle_sniper":        "bots.heuristic.oracle_sniper:agent_fn",
     "proximity_conqueror":  "bots.heuristic.proximity_conqueror:agent_fn",
     "orbital_kineticist":   "bots.orbital_kineticist:agent_fn"
-  }
+  },
+  "save_data": false
 }

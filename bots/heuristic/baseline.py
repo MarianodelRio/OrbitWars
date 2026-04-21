@@ -3,6 +3,10 @@ import random
 from bots.interface import Bot
 
 class BaselineBot(Bot):
+    @property
+    def name(self) -> str:
+        return "heuristic.baseline"
+
     def act(self, obs, config=None):
         planets = obs.get("planets", []) if isinstance(obs, dict) else obs.planets
         player = obs.get("player", 0) if isinstance(obs, dict) else obs.player

@@ -3,6 +3,10 @@ from bots.interface import Bot
 
 
 class OracleSniperBot(Bot):
+    @property
+    def name(self) -> str:
+        return "heuristic.oracle_sniper"
+
     def __init__(self):
         self.step = 0
         self.targeted = {}

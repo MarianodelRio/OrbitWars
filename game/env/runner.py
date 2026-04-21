@@ -1,7 +1,7 @@
 from kaggle_environments import make
 
 
-def run_match(bot1, bot2, steps=500):
+def run_match(bot1, bot2, steps=500, render=False, save_data=False, data_path=None):
     env = make("orbit_wars", configuration={"episodeSteps": steps})
     env.run([bot1, bot2])
 
@@ -20,4 +20,14 @@ def run_match(bot1, bot2, steps=500):
     else:
         winner = None
 
-    return {"winner": winner, "rewards": rewards, "steps": len(env.steps)}
+    bot0_name = getattr(bot1, 'name', getattr(bot1, '__name__', str(bot1)))
+    bot1_name = getattr(bot2, 'name', getattr(bot2, '__name__', str(bot2)))
+
+    result_dict = {"winner": winner, "rewards": rewards, "steps": len(env.steps)}
+
+    if save_data and data_path is not None:
+        from game.data.hdf5_writer import write_match_hdf5
+        write_match_hdf5(env.steps, result_dict, data_path, bot0_name=bot0_name, bot1_name=bot1_name, steps_limit=steps)
+        result_dict["data_path"] = data_path
+
+    return result_dict
