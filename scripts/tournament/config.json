@@ -1,14 +1,15 @@
 {
-  "n_matches": 5,
+  "n_matches": 100,
   "steps": 500,
   "save_log": true,
-  "self_play": false,
+  "self_play": true,
   "bots": {
-    "sniper":               "bots.heuristic.sniper:agent_fn",
     "baseline":             "bots.heuristic.baseline:agent_fn",
     "oracle_sniper":        "bots.heuristic.oracle_sniper:agent_fn",
+    "sniper":               "bots.heuristic.sniper:agent_fn",
+    "scoring":              "bots.scoring.bot:agent_fn", 
     "proximity_conqueror":  "bots.heuristic.proximity_conqueror:agent_fn",
-    "orbital_kineticist":   "bots.orbital_kineticist:agent_fn"
+    "orbital_kineticist":     "bots.orbital_kineticist.bot:agent_fn"
   },
-  "save_data": false
+  "save_data": true
 }

@@ -9,7 +9,7 @@ from dataset.catalog import DataCatalog
 from dataset.builder import SampleBuilder
 from dataset.transforms.state import RawStateTransform
 from dataset.transforms.action import RawActionTransform
-from dataset.transforms.filters import HasActionFilter, EarlyGameFilter
+from dataset.transforms.filters import HasActionFilter, EarlyGameFilter, NonEmptyStateFilter
 from dataset.transforms.reward import BinaryOutcomeReward
 
 
@@ -107,6 +107,8 @@ class PipelineConfig:
             return None
         if spec == "has_action":
             return HasActionFilter()
+        if spec == "non_empty_state":
+            return NonEmptyStateFilter()
         if isinstance(spec, str) and spec.startswith("early_game:"):
             parts = spec.split(":")
             if len(parts) != 2 or not parts[1]:
@@ -124,5 +126,5 @@ class PipelineConfig:
             return EarlyGameFilter(max_turn=max_turn)
         raise ValueError(
             f"Unknown step_filter {spec!r}. Expected one of: null, 'has_action', "
-            "'early_game:<N>'."
+            "'non_empty_state', 'early_game:<N>'."
         )

@@ -16,6 +16,6 @@
     "state_transform": "raw",
     "action_transform": "raw",
     "reward_transform": null,
-    "step_filter": "has_action"
+    "step_filter": "non_empty_state"
   }
 }

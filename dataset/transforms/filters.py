@@ -29,6 +29,13 @@ class EarlyGameFilter:
         return step.turn <= self.max_turn
 
 
+class NonEmptyStateFilter:
+    """True only if the observation contains at least one planet (filters t=0 empty states)."""
+
+    def __call__(self, step: StepRecord, player: int) -> bool:
+        return step.planets.shape[0] > 0
+
+
 class CompositeFilter:
     """Logical AND of multiple StepFilters."""
 
