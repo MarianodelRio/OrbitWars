@@ -1,0 +1,21 @@
+{
+  "catalog": {
+    "roots": null,
+    "filter": {
+      "bot": null,
+      "opponent": null,
+      "winner_only": false,
+      "done_reason": null,
+      "min_steps": null,
+      "max_steps": null
+    }
+  },
+  "builder": {
+    "perspective": "winner",
+    "mode": "il_step",
+    "state_transform": "raw",
+    "action_transform": "raw",
+    "reward_transform": null,
+    "step_filter": "has_action"
+  }
+}

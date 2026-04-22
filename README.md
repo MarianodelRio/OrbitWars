@@ -28,6 +28,14 @@ OrbitWars/
 │       ├── random_bot.py    # Sends half ships to a random target
 │       └── sniper.py        # Captures nearest planet when garrison allows
 │
+├── dataset/                 # Dataset pipeline — see docs/dataset.md
+│   ├── catalog.py           # DataCatalog + EpisodeMeta (episode discovery)
+│   ├── episode.py           # EpisodeReader + StepRecord (HDF5 access)
+│   ├── builder.py           # SampleBuilder + TrainingSample
+│   ├── config.py            # PipelineConfig (JSON-driven factory)
+│   ├── torch_adapter.py     # OrbitDataset + LazyOrbitDataset
+│   └── transforms/          # State, action, reward transforms; step filters
+│
 ├── training/                # Training infrastructure (RL / self-play)
 │   ├── envs/
 │   │   └── gym_wrapper.py   # Gymnasium-compatible wrapper (step() stub)
@@ -132,13 +140,11 @@ kaggle competitions submit orbit-wars -f submission/main.py -m "description"
 
 `submission/main.py` is auto-generated — do not edit it manually. It is fully self-contained (no imports from `game/` or `bots/`) as required by Kaggle.
 
-## Training
+## Dataset Pipeline
 
-`training/` contains infrastructure for reinforcement learning and self-play:
-
-- **`training/envs/gym_wrapper.py`** — a `gymnasium.Env` wrapper exposing the game as an RL environment. Observation space: 1053 floats (50 planets × 7 + 100 fleets × 7 + 3 scalars). Action space: `[planet_idx, angle, ship_fraction]`. `step()` is not yet implemented.
-- **`training/rewards/shaped.py`** — dense reward function: `Δplanets + 0.01·Δships + 0.1·Δproduction`. Suitable as a shaping bonus on top of the sparse win/loss signal.
-- **`training/train.py`** — self-play loop entry point. Currently runs matches and prints results; gradient updates are not yet implemented.
+`dataset/` converts recorded `.h5` episode files into training samples for imitation
+learning or offline RL. See [docs/dataset.md](docs/dataset.md) for the full API
+reference and [docs/pipeline_config.md](docs/pipeline_config.md) for JSON config.
 
 ## Running Tests
 
