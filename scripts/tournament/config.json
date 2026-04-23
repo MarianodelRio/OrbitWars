@@ -7,9 +7,9 @@
     "baseline":             "bots.heuristic.baseline:agent_fn",
     "oracle_sniper":        "bots.heuristic.oracle_sniper:agent_fn",
     "sniper":               "bots.heuristic.sniper:agent_fn",
-    "scoring":              "bots.scoring.bot:agent_fn", 
+    "scoring":              "bots.scoring.bot:agent_fn",
     "proximity_conqueror":  "bots.heuristic.proximity_conqueror:agent_fn",
-    "orbital_kineticist":     "bots.orbital_kineticist.bot:agent_fn"
+    "orbital_kineticist":   "bots.orbital_kineticist.bot:agent_fn"
   },
   "save_data": true
 }

@@ -112,7 +112,7 @@ def agent(obs, config=None):
         import io
         import torch
         _data = base64.b64decode(_CHECKPOINT_B64)
-        _ckpt = torch.load(io.BytesIO(_data), map_location="cpu")
+        _ckpt = torch.load(io.BytesIO(_data), map_location="cpu", weights_only=False)
         _config = _ckpt["config"]
         _max_planets = _ckpt.get("max_planets", _config.max_planets)
         _max_fleets = _ckpt.get("max_fleets", 100)

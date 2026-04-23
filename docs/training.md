@@ -52,6 +52,7 @@ runs/neural_il/run_001/
 | `data_pipeline` | object | — | Data loading and feature-building configuration; see `docs/pipeline_config.md` for the full field reference |
 | `device` | string | `"cpu"` | PyTorch device string (`"cpu"`, `"cuda"`, `"mps"`) |
 | `seed` | int | `42` | Random seed for reproducibility |
+| `resume_from` | string\|null | `null` | Path to a `.pt` checkpoint whose weights are loaded into the model **before** training starts. Relative paths are resolved from the repository root. The run always gets a new `run_id` — metrics history is not carried over. |
 
 ### `model_config` fields
 
@@ -75,6 +76,40 @@ bot = NeuralBot.load("runs/neural_il/run_001/checkpoints/best.pt")
 from bots.interface import make_agent
 agent_fn = make_agent(bot)
 ```
+
+### Play matches or tournaments with a trained checkpoint
+
+Any bot spec in `scripts/matches/config.json` or `scripts/tournament/config.json` that points to the neural bot can include a `?checkpoint=` suffix:
+
+```json
+{
+  "bot1": "bots.neural.bot:agent_fn?checkpoint=runs/neural_il/run_001/checkpoints/best.pt",
+  "bot2": "bots.heuristic.sniper:agent_fn"
+}
+```
+
+The checkpoint is loaded lazily on the first call (once per match session). Relative paths are resolved from the repository root. Without `?checkpoint=` the neural bot uses random weights.
+
+The same syntax works inside the tournament `bots` registry:
+
+```json
+"bots": {
+  "neural_v1": "bots.neural.bot:agent_fn?checkpoint=runs/neural_il/run_001/checkpoints/best.pt",
+  "sniper":    "bots.heuristic.sniper:agent_fn"
+}
+```
+
+### Continue training from a checkpoint (`resume_from`)
+
+Set `resume_from` in `training/il_config.json` to load weights before training starts:
+
+```json
+{
+  "resume_from": "runs/neural_il/run_001/checkpoints/best.pt"
+}
+```
+
+The script prints a confirmation line and then trains normally. A new `run_id` is assigned automatically (`run_002`, `run_003`, …) so the original run is never overwritten. Set `resume_from` back to `null` to start from random weights again.
 
 ### Run standalone evaluation against registered opponents
 

@@ -5,8 +5,13 @@ Usage:
 """
 
 import argparse
+import os
+import sys
 from pathlib import Path
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import torch
 from training.utils.run_config import RunConfig
 from bots.neural.model import PolicyValueModel, PolicyValueConfig
 from bots.neural.state_builder import StateBuilder
@@ -29,6 +34,13 @@ def main():
         max_fleets=model_cfg.max_fleets if hasattr(model_cfg, "max_fleets") else 100,
     )
     codec = ActionCodec(n_amount_bins=model_cfg.n_amount_bins)
+
+    if config.resume_from:
+        _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        ckpt_path = config.resume_from if os.path.isabs(config.resume_from) else os.path.join(_root, config.resume_from)
+        ckpt = torch.load(ckpt_path, map_location=config.device, weights_only=False)
+        model.load_state_dict(ckpt["state_dict"])
+        print(f"Resumed from: {ckpt_path}  (epoch {ckpt.get('epoch', '?')})")
 
     ILTrainer(config, model, state_builder, codec).train()
 

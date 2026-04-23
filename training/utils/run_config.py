@@ -24,6 +24,8 @@ class RunConfig:
     data_pipeline: dict
     device: str
     seed: int
+    weight_decay: float = 1e-4
+    resume_from: str | None = None
 
     @classmethod
     def from_json(cls, path: Path) -> "RunConfig":

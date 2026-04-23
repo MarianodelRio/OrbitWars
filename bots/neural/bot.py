@@ -73,7 +73,7 @@ class NeuralBot(Bot):
                 "n_amount_bins": int,
             }
         """
-        checkpoint = torch.load(path, map_location=device)
+        checkpoint = torch.load(path, map_location=device, weights_only=False)
         config: PolicyValueConfig = checkpoint["config"]
         max_planets = checkpoint.get("max_planets", config.max_planets)
         max_fleets = checkpoint.get("max_fleets", 100)

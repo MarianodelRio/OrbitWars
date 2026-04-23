@@ -159,7 +159,7 @@ def test_checkpoint_contains_expected_keys(tmp_path):
     sb = StateBuilder()
     codec = ActionCodec()
     mgr.save(model, sb, codec, epoch=1, metrics={"train_loss": 0.5, "val_loss": 0.4}, is_best=False)
-    ckpt = torch.load(tmp_path / "checkpoints" / "epoch_001.pt", map_location="cpu")
+    ckpt = torch.load(tmp_path / "checkpoints" / "epoch_001.pt", map_location="cpu", weights_only=False)
     expected_keys = {"config", "state_dict", "epoch", "train_loss", "val_loss", "timestamp",
                      "max_planets", "max_fleets", "n_amount_bins"}
     assert expected_keys.issubset(set(ckpt.keys()))
@@ -177,3 +177,78 @@ def test_list_checkpoints_excludes_best_and_last(tmp_path):
     names = {p.name for p in paths}
     assert "best.pt" not in names
     assert "last.pt" not in names
+
+
+# ---------------------------------------------------------------------------
+# RunConfig.resume_from
+# ---------------------------------------------------------------------------
+
+def test_run_config_resume_from_defaults_to_none():
+    config = _minimal_run_config()
+    assert config.resume_from is None
+
+
+def test_run_config_resume_from_accepts_path_string():
+    config = _minimal_run_config(resume_from="runs/neural_il/run_001/checkpoints/best.pt")
+    assert config.resume_from == "runs/neural_il/run_001/checkpoints/best.pt"
+
+
+def test_run_config_save_round_trips_resume_from(tmp_path):
+    config = _minimal_run_config(resume_from="runs/neural_il/run_001/checkpoints/best.pt")
+    config.save(tmp_path)
+    with open(tmp_path / "config.json") as f:
+        data = json.load(f)
+    assert data["resume_from"] == "runs/neural_il/run_001/checkpoints/best.pt"
+
+
+# ---------------------------------------------------------------------------
+# load_agent checkpoint syntax
+# ---------------------------------------------------------------------------
+
+def test_load_agent_plain_spec_returns_callable():
+    from game.env.evaluator import load_agent
+    agent = load_agent("bots.heuristic.baseline:agent_fn")
+    assert callable(agent)
+
+
+def test_load_agent_checkpoint_spec_returns_callable(tmp_path):
+    """load_agent with ?checkpoint= returns a lazy closure (not yet executed)."""
+    from game.env.evaluator import load_agent
+    # Point to a non-existent checkpoint — the closure should be created without
+    # loading the file (lazy init), so no error at construction time.
+    spec = f"bots.neural.bot:agent_fn?checkpoint={tmp_path}/fake.pt"
+    agent = load_agent(spec)
+    assert callable(agent)
+
+
+def test_load_agent_checkpoint_name_reflects_file(tmp_path):
+    from game.env.evaluator import load_agent
+    spec = f"bots.neural.bot:agent_fn?checkpoint={tmp_path}/best.pt"
+    agent = load_agent(spec)
+    assert "best.pt" in agent.__name__
+
+
+def test_load_agent_checkpoint_loads_on_first_call(tmp_path):
+    """End-to-end: save a real checkpoint and verify load_agent can load and call it."""
+    from game.env.evaluator import load_agent
+    from bots.neural.model import PolicyValueConfig, PolicyValueModel
+
+    # Build a model whose input_dim matches StateBuilder(max_planets=2, max_fleets=2)
+    # input_dim = 2*7 + 2*7 = 28
+    model = PolicyValueModel(PolicyValueConfig(input_dim=28, hidden_dims=[16], max_planets=2))
+    sb = StateBuilder(max_planets=2, max_fleets=2)
+    codec = ActionCodec()
+    mgr = _make_ckpt_manager(tmp_path)
+    mgr.save(model, sb, codec, epoch=1, metrics={"train_loss": 0.5, "val_loss": 0.4}, is_best=True)
+    ckpt_path = str(tmp_path / "checkpoints" / "best.pt")
+
+    spec = f"bots.neural.bot:agent_fn?checkpoint={ckpt_path}"
+    agent = load_agent(spec)
+
+    obs = {
+        "player": 0,
+        "planets": [[0, 0, 10.0, 20.0, 1.0, 50.0, 3.0], [1, 1, 80.0, 70.0, 1.0, 30.0, 2.0]],
+        "fleets": [],
+    }
+    result = agent(obs)
+    assert isinstance(result, list)

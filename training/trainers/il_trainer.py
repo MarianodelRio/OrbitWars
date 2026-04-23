@@ -4,7 +4,16 @@ from __future__ import annotations
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.utils.data import DataLoader
+
+
+def _safe_ce(logits: torch.Tensor, labels: torch.Tensor, ignore_index: int = -1) -> torch.Tensor:
+    """CrossEntropyLoss that returns 0 (not NaN) when all labels are ignored."""
+    mask = labels != ignore_index
+    if not mask.any():
+        return torch.tensor(0.0, device=logits.device)
+    return F.cross_entropy(logits[mask], labels[mask])
 
 from dataset.catalog import DataCatalog
 from bots.neural.training import build_il_dataset, NeuralILDataset
@@ -39,9 +48,15 @@ class ILTrainer(BaseTrainer):
                 min_steps=filter_cfg.get("min_steps"),
                 max_steps=filter_cfg.get("max_steps"),
             )
+        max_episodes = filter_cfg.get("max_episodes")
+        if max_episodes is not None:
+            catalog = DataCatalog(catalog.episodes[:max_episodes])
 
-        # 3. Split by episode index to avoid data leakage
-        all_episodes = catalog.episodes
+        # 3. Split by episode — shuffle first so each split has a mix of matchups
+        import random as _random
+        all_episodes = list(catalog.episodes)
+        rng = _random.Random(self.config.seed)
+        rng.shuffle(all_episodes)
         n_val = max(1, int(len(all_episodes) * self.config.val_split))
 
         train_episodes = all_episodes[:-n_val]
@@ -72,12 +87,28 @@ class ILTrainer(BaseTrainer):
             shuffle=False,
         )
 
-        # 4. Optimizer
-        optimizer = torch.optim.Adam(self.model.parameters(), lr=self.config.lr)
+        # Summary
+        total_steps = sum(e.total_steps for e in all_episodes)
+        bots_seen = sorted({e.bot0 for e in all_episodes} | {e.bot1 for e in all_episodes})
+        print("\n=== Data ===")
+        print(f"  Episodes : {len(all_episodes)}  (train={len(train_episodes)}, val={len(val_episodes)})")
+        print(f"  Turns    : {total_steps:,}")
+        print(f"  Bots     : {', '.join(bots_seen)}")
+        print(f"  Samples  : train={len(train_dataset):,}  val={len(val_dataset):,}")
+        print(f"  Batches  : {len(train_loader)} per epoch  (batch_size={self.config.batch_size})")
+        cfg = self.model.config
+        total_params = sum(p.numel() for p in self.model.parameters())
+        weight_decay = getattr(self.config, "weight_decay", 1e-4)
+        print("\n=== Model ===")
+        print(f"  Architecture : {cfg.input_dim} → {cfg.hidden_dims}")
+        print(f"  Parameters   : {total_params:,}")
+        print(f"  Dropout      : {cfg.dropout}  |  lr={self.config.lr}  |  wd={weight_decay}  |  epochs={self.config.epochs}")
+        print(f"  Perspective  : {perspective}  |  device={self.config.device}")
+        print()
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=self.config.lr, weight_decay=weight_decay)
 
         # 5. Loss functions
         ce_loss = nn.CrossEntropyLoss()
-        ce_ignore = nn.CrossEntropyLoss(ignore_index=-1)
         mse_loss = nn.MSELoss()
 
         device = torch.device(self.config.device)
@@ -114,9 +145,9 @@ class ILTrainer(BaseTrainer):
 
                 loss = (
                     ce_loss(output.action_type_logits, action_type_labels)
-                    + ce_ignore(output.source_logits, source_labels)
-                    + ce_ignore(output.target_logits, target_labels)
-                    + ce_ignore(output.amount_logits, amount_labels)
+                    + _safe_ce(output.source_logits, source_labels)
+                    + _safe_ce(output.target_logits, target_labels)
+                    + _safe_ce(output.amount_logits, amount_labels)
                     + 0.5 * mse_loss(output.value.squeeze(-1), value_labels)
                 )
 
@@ -146,9 +177,9 @@ class ILTrainer(BaseTrainer):
 
                     loss = (
                         ce_loss(output.action_type_logits, action_type_labels)
-                        + ce_ignore(output.source_logits, source_labels)
-                        + ce_ignore(output.target_logits, target_labels)
-                        + ce_ignore(output.amount_logits, amount_labels)
+                        + _safe_ce(output.source_logits, source_labels)
+                        + _safe_ce(output.target_logits, target_labels)
+                        + _safe_ce(output.amount_logits, amount_labels)
                         + 0.5 * mse_loss(output.value.squeeze(-1), value_labels)
                     )
 

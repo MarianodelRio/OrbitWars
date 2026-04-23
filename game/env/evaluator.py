@@ -2,11 +2,40 @@ import importlib
 import os
 from game.env.runner import run_match
 
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
 def load_agent(path_str):
-    """Load agent from 'module.path:attr' string."""
+    """Load agent from 'module.path:attr' or 'module.path:attr?checkpoint=<path>' string.
+
+    When ?checkpoint=<path> is provided the agent is a lazy-loading closure that
+    calls NeuralBot.load() on the first invocation.  Relative checkpoint paths
+    are resolved from the repository root.
+    """
+    checkpoint = None
+    if "?checkpoint=" in path_str:
+        path_str, qs = path_str.split("?checkpoint=", 1)
+        checkpoint = qs.strip()
+
     module_path, attr = path_str.rsplit(":", 1)
     mod = importlib.import_module(module_path)
-    return getattr(mod, attr)
+    fn = getattr(mod, attr)
+
+    if checkpoint is None:
+        return fn
+
+    ckpt_path = checkpoint if os.path.isabs(checkpoint) else os.path.join(_REPO_ROOT, checkpoint)
+    _bot = [None]
+
+    def _agent(obs, config=None):
+        if _bot[0] is None:
+            from bots.neural.bot import NeuralBot
+            print(f"[load_agent] Loading checkpoint: {ckpt_path}")
+            _bot[0] = NeuralBot.load(ckpt_path)
+        return _bot[0].act(obs, config)
+
+    _agent.__name__ = f"neural({os.path.basename(ckpt_path)})"
+    return _agent
 
 def evaluate(bot1, bot2, n_matches=10, steps=500, save_data=False, data_dir=None):
     wins = [0, 0]
