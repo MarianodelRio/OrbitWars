@@ -33,6 +33,7 @@ SOURCE_FILES = [
     "state_builder.py",
     "action_codec.py",
     "model.py",
+    "pointer_model.py",
     "bot.py",
 ]
 
@@ -117,7 +118,11 @@ def agent(obs, config=None):
         _max_planets = _ckpt.get("max_planets", _config.max_planets)
         _max_fleets = _ckpt.get("max_fleets", 100)
         _n_amount_bins = _ckpt.get("n_amount_bins", _config.n_amount_bins)
-        _model = PolicyValueModel(_config)
+        _model_type = _ckpt.get("model_type", "flat")
+        if _model_type == "pointer":
+            _model = PointerNetworkModel(_config)
+        else:
+            _model = PolicyValueModel(_config)
         _model.load_state_dict(_ckpt["state_dict"])
         _state_builder = StateBuilder(max_planets=_max_planets, max_fleets=_max_fleets)
         _codec = ActionCodec(n_amount_bins=_n_amount_bins)

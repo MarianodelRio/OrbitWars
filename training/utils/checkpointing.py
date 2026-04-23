@@ -7,7 +7,11 @@ from pathlib import Path
 
 import torch
 
+import dataclasses
+
 from bots.neural.bot import NeuralBot
+from bots.neural.pointer_model import PointerNetworkModel
+from bots.neural.planet_policy_model import PlanetPolicyModel
 
 
 class CheckpointManager:
@@ -26,9 +30,22 @@ class CheckpointManager:
         metrics: dict,
         is_best: bool = False,
     ) -> Path:
+        if isinstance(model, PlanetPolicyModel):
+            model_type = "planet_policy"
+        elif isinstance(model, PointerNetworkModel):
+            model_type = "pointer"
+        else:
+            model_type = "flat"
+
+        if isinstance(model, PlanetPolicyModel):
+            config_to_save = dataclasses.asdict(model.config)
+        else:
+            config_to_save = model.config
+
         checkpoint = {
-            "config": model.config,
-            "config_dict": model.config.__dict__,
+            "model_type": model_type,
+            "config": config_to_save,
+            "config_dict": model.config.__dict__ if not isinstance(model, PlanetPolicyModel) else config_to_save,
             "state_dict": model.state_dict(),
             "max_planets": state_builder.max_planets,
             "max_fleets": state_builder.max_fleets,

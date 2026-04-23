@@ -26,3 +26,12 @@ class ModelLabels:
     target_idx: int     # -1 if NO_OP
     amount_bin: int     # -1 if NO_OP
     value_target: float
+
+
+@dataclass
+class PerPlanetLabels:
+    planet_action_types: np.ndarray   # shape (max_planets,) int32 — 0=NO_OP, 1=LAUNCH, -1=padding
+    planet_target_idxs: np.ndarray    # shape (max_planets,) int32 — -1=padding or suppressed
+    planet_amount_bins: np.ndarray    # shape (max_planets,) int32 — -1=padding or NO_OP
+    my_planet_mask: np.ndarray        # shape (max_planets,) bool
+    value_target: float

@@ -1,9 +1,9 @@
 {
   "mode": "single",
-  "bot1": "bots.neural.bot:agent_fn",
+  "bot1": "bots.heuristic.sniper:agent_fn",
   "bot2": "bots.heuristic.baseline:agent_fn",
   "steps": 500,
-  "n_matches": 3,
+  "n_matches": 10,
   "save_log": true,
-  "save_data": false
+  "save_data": true
 }

@@ -10,6 +10,7 @@ from training.utils.metrics import MetricsLogger
 from training.utils.run_config import RunConfig
 from training.utils.checkpointing import CheckpointManager
 from bots.neural.model import PolicyValueConfig, PolicyValueModel
+from bots.neural.pointer_model import PointerNetworkConfig, PointerNetworkModel
 from bots.neural.state_builder import StateBuilder
 from bots.neural.action_codec import ActionCodec
 
@@ -125,6 +126,43 @@ def test_run_config_run_dir_contains_run_name_and_id():
     assert str(config.run_dir).endswith("my_run/run_007")
 
 
+def test_run_config_weight_decay_defaults_to_1e4():
+    config = _minimal_run_config()
+    assert config.weight_decay == pytest.approx(1e-4)
+
+
+def test_run_config_action_type_loss_weight_defaults_to_1():
+    config = _minimal_run_config()
+    assert config.action_type_loss_weight == pytest.approx(1.0)
+
+
+def test_run_config_value_loss_weight_defaults_to_0_5():
+    config = _minimal_run_config()
+    assert config.value_loss_weight == pytest.approx(0.5)
+
+
+def test_run_config_use_class_weights_defaults_to_true():
+    config = _minimal_run_config()
+    assert config.use_class_weights is True
+
+
+def test_run_config_new_fields_round_trip_json(tmp_path):
+    """weight_decay, action_type_loss_weight, value_loss_weight, use_class_weights serialise correctly."""
+    config = _minimal_run_config(
+        weight_decay=1e-3,
+        action_type_loss_weight=2.0,
+        value_loss_weight=0.25,
+        use_class_weights=False,
+    )
+    config.save(tmp_path)
+    with open(tmp_path / "config.json") as f:
+        data = json.load(f)
+    assert data["weight_decay"] == pytest.approx(1e-3)
+    assert data["action_type_loss_weight"] == pytest.approx(2.0)
+    assert data["value_loss_weight"] == pytest.approx(0.25)
+    assert data["use_class_weights"] is False
+
+
 # ---------------------------------------------------------------------------
 # CheckpointManager
 # ---------------------------------------------------------------------------
@@ -161,8 +199,30 @@ def test_checkpoint_contains_expected_keys(tmp_path):
     mgr.save(model, sb, codec, epoch=1, metrics={"train_loss": 0.5, "val_loss": 0.4}, is_best=False)
     ckpt = torch.load(tmp_path / "checkpoints" / "epoch_001.pt", map_location="cpu", weights_only=False)
     expected_keys = {"config", "state_dict", "epoch", "train_loss", "val_loss", "timestamp",
-                     "max_planets", "max_fleets", "n_amount_bins"}
+                     "max_planets", "max_fleets", "n_amount_bins", "model_type"}
     assert expected_keys.issubset(set(ckpt.keys()))
+
+
+def test_checkpoint_flat_model_type(tmp_path):
+    """PolicyValueModel checkpoint has model_type == 'flat'."""
+    mgr = _make_ckpt_manager(tmp_path)
+    model = _make_model()
+    sb = StateBuilder()
+    codec = ActionCodec()
+    mgr.save(model, sb, codec, epoch=1, metrics={"train_loss": 0.5, "val_loss": 0.4}, is_best=False)
+    ckpt = torch.load(tmp_path / "checkpoints" / "epoch_001.pt", map_location="cpu", weights_only=False)
+    assert ckpt["model_type"] == "flat"
+
+
+def test_checkpoint_pointer_model_type(tmp_path):
+    """PointerNetworkModel checkpoint has model_type == 'pointer'."""
+    mgr = _make_ckpt_manager(tmp_path)
+    model = PointerNetworkModel(PointerNetworkConfig())
+    sb = StateBuilder()
+    codec = ActionCodec()
+    mgr.save(model, sb, codec, epoch=1, metrics={"train_loss": 0.4, "val_loss": 0.35}, is_best=False)
+    ckpt = torch.load(tmp_path / "checkpoints" / "epoch_001.pt", map_location="cpu", weights_only=False)
+    assert ckpt["model_type"] == "pointer"
 
 
 def test_list_checkpoints_excludes_best_and_last(tmp_path):

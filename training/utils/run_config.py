@@ -25,6 +25,9 @@ class RunConfig:
     device: str
     seed: int
     weight_decay: float = 1e-4
+    action_type_loss_weight: float = 1.0
+    value_loss_weight: float = 0.5
+    use_class_weights: bool = True
     resume_from: str | None = None
 
     @classmethod

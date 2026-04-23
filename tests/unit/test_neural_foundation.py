@@ -441,3 +441,121 @@ def test_action_codec_decode_no_ships_returns_empty():
     )
     result = codec.decode(output, ctx, planets)
     assert result == []
+
+
+# ---------------------------------------------------------------------------
+# StateBuilder.from_step_structured
+# ---------------------------------------------------------------------------
+
+def test_state_builder_structured_shapes():
+    planets = [
+        [10, 0, 20.0, 30.0, 5.0, 100.0, 3.0],
+        [20, 1, 60.0, 70.0, 5.0, 50.0, 2.0],
+    ]
+    fleets = [
+        [1, 0, 25.0, 35.0, math.pi / 4, 10, 30.0],
+    ]
+    step = _make_step(planets, fleets)
+    sb = StateBuilder(max_planets=50, max_fleets=100)
+    result = sb.from_step_structured(step, player=0)
+
+    assert result["planet_features"].shape == (50, 7)
+    assert result["fleet_features"].shape == (700,)
+    assert result["planet_mask"].shape == (50,)
+    assert result["planet_features"].dtype == np.float32
+    assert result["fleet_features"].dtype == np.float32
+    assert result["planet_mask"].dtype == bool
+
+
+def test_state_builder_structured_planet_mask_n_real():
+    """planet_mask has exactly n_planets True values."""
+    planets = [
+        [10, 0, 20.0, 30.0, 5.0, 100.0, 3.0],
+        [20, 1, 60.0, 70.0, 5.0, 50.0, 2.0],
+        [30, -1, 50.0, 50.0, 5.0, 80.0, 1.0],
+    ]
+    step = _make_step(planets, [])
+    sb = StateBuilder(max_planets=50)
+    result = sb.from_step_structured(step, player=0)
+
+    assert result["planet_mask"].sum() == 3
+    assert np.all(result["planet_mask"][:3])
+    assert not np.any(result["planet_mask"][3:])
+
+
+def test_state_builder_structured_planet_features_values():
+    """Planet feature values match the same normalisation as from_step."""
+    planets = [
+        [5, 0, 40.0, 80.0, 3.0, 100.0, 4.0],
+    ]
+    step = _make_step(planets, [])
+    sb = StateBuilder()
+    structured = sb.from_step_structured(step, player=0)
+
+    pf = structured["planet_features"]
+    assert pf[0, 0] == pytest.approx(1.0)           # owner_self
+    assert pf[0, 1] == pytest.approx(0.0)           # owner_enemy
+    assert pf[0, 2] == pytest.approx(0.0)           # owner_neutral
+    assert pf[0, 3] == pytest.approx(40.0 / 100.0) # x
+    assert pf[0, 4] == pytest.approx(80.0 / 100.0) # y
+    assert pf[0, 5] == pytest.approx(min(100.0 / 200.0, 1.0))  # ships
+    assert pf[0, 6] == pytest.approx(4.0 / 5.0)    # production
+
+
+def test_state_builder_structured_padding_is_zero():
+    """Padding slots in planet_features must be zero-filled."""
+    planets = [[10, 0, 20.0, 30.0, 5.0, 50.0, 2.0]]
+    step = _make_step(planets, [])
+    sb = StateBuilder(max_planets=10)
+    result = sb.from_step_structured(step, player=0)
+
+    # Slots 1..9 should all be zero
+    np.testing.assert_array_equal(
+        result["planet_features"][1:], np.zeros((9, 7), dtype=np.float32)
+    )
+
+
+def test_state_builder_structured_context_matches_from_step():
+    """context returned by from_step_structured equals from_step context."""
+    planets = [
+        [10, 0, 20.0, 30.0, 5.0, 100.0, 3.0],
+        [20, 1, 60.0, 70.0, 5.0, 50.0, 2.0],
+    ]
+    step = _make_step(planets, [])
+    sb = StateBuilder()
+
+    flat = sb.from_step(step, player=0)
+    structured = sb.from_step_structured(step, player=0)
+
+    np.testing.assert_array_equal(
+        structured["context"].planet_ids, flat.context.planet_ids
+    )
+    np.testing.assert_array_equal(
+        structured["context"].my_planet_mask, flat.context.my_planet_mask
+    )
+    assert structured["context"].n_planets == flat.context.n_planets
+
+
+def test_state_builder_structured_empty():
+    step = _make_step([], [])
+    sb = StateBuilder()
+    result = sb.from_step_structured(step, player=0)
+
+    assert result["planet_features"].shape == (50, 7)
+    assert result["fleet_features"].shape == (700,)
+    np.testing.assert_array_equal(result["planet_mask"], np.zeros(50, dtype=bool))
+
+
+def test_state_builder_from_obs_structured_matches_from_step_structured():
+    planets_list = [[1, 0, 10.0, 20.0, 3.0, 60.0, 2.0], [2, 1, 50.0, 60.0, 3.0, 40.0, 3.0]]
+    fleets_list = [[7, 0, 15.0, 25.0, 0.5, 1, 20.0]]
+    obs = {"planets": planets_list, "fleets": fleets_list}
+    step = _make_step(planets_list, fleets_list)
+    sb = StateBuilder()
+
+    r_obs = sb.from_obs_structured(obs, player=0)
+    r_step = sb.from_step_structured(step, player=0)
+
+    np.testing.assert_array_almost_equal(r_obs["planet_features"], r_step["planet_features"])
+    np.testing.assert_array_almost_equal(r_obs["fleet_features"], r_step["fleet_features"])
+    np.testing.assert_array_equal(r_obs["planet_mask"], r_step["planet_mask"])

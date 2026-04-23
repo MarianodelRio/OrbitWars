@@ -2,9 +2,12 @@
 
 ## What it is
 
-`bots/neural/` is a policy-value neural bot for Orbit Wars. It uses a multi-head MLP
-trained via imitation learning on recorded heuristic matches. At inference it runs a
-single forward pass and returns one launch action (or no-op) per turn.
+`bots/neural/` is a policy-value neural bot for Orbit Wars. It supports two model architectures:
+
+- **Flat MLP** (`PolicyValueModel`) — encodes the full state as a flattened 1050-dim vector and applies a multi-head MLP.
+- **Pointer Network** (`PointerNetworkModel`) — encodes each planet individually with a shared MLP, uses dot-product attention to produce source/target logits that directly address planets. This enables better generalisation across different planet counts.
+
+Both models are trained via imitation learning on recorded heuristic matches. At inference each runs a single forward pass and returns one launch action (or no-op) per turn.
 
 ---
 
@@ -12,19 +15,20 @@ single forward pass and returns one launch action (or no-op) per turn.
 
 ```
 bots/neural/
-├── types.py          # Pure-numpy dataclasses. No PyTorch.
-├── state_builder.py  # obs/StepRecord → ModelInput (numpy array + context)
-├── action_codec.py   # Raw actions ↔ ModelLabels (encode for training, decode for inference)
-├── model.py          # PolicyValueModel — PyTorch nn.Module
-├── bot.py            # NeuralBot — wraps model for live play. agent_fn entry point.
-└── training.py       # NeuralILDataset + build_il_dataset — IL data pipeline
+├── types.py           # Pure-numpy dataclasses. No PyTorch.
+├── state_builder.py   # obs/StepRecord → ModelInput (flat) or StructuredModelInput (pointer)
+├── action_codec.py    # Raw actions ↔ ModelLabels (encode for training, decode for inference)
+├── model.py           # PolicyValueModel — flat MLP. PyTorch nn.Module.
+├── pointer_model.py   # PointerNetworkModel — attention-based. PyTorch nn.Module.
+├── bot.py             # NeuralBot — wraps either model for live play. agent_fn entry point.
+└── training.py        # NeuralILDataset + build_il_dataset — IL data pipeline
 ```
 
 ---
 
 ## Data flow
 
-### Inference (live game)
+### Inference — Flat MLP
 
 ```
 obs dict
@@ -36,7 +40,22 @@ obs dict
                            └─ [] or [[planet_id, angle, n_ships]]
 ```
 
-### Imitation learning (offline)
+### Inference — Pointer Network
+
+```
+obs dict
+  └─ StateBuilder.from_obs_structured(obs, player)
+       └─ StructuredModelInput(planet_features (50,7), fleet_features (700,),
+                               planet_mask (50,), context: ActionContext)
+            └─ NeuralBot.act() — 3 tensors + forward pass (no_grad)
+                 └─ PointerPolicyOutput (logits per head + value scalar)
+                      └─ ActionCodec.decode(output, context, planets)
+                           └─ [] or [[planet_id, angle, n_ships]]
+```
+
+`NeuralBot.act()` detects the model type automatically via `isinstance` — no caller change needed.
+
+### Imitation learning — Flat MLP
 
 ```
 HDF5 file
@@ -44,8 +63,20 @@ HDF5 file
        ├─ StateBuilder.from_step(step, player) → ModelInput
        └─ ActionCodec.encode(raw_actions, context, planets, value) → ModelLabels
             └─ ILSample(state_array, labels)
-                 └─ NeuralILDataset → torch DataLoader
+                 └─ NeuralILDataset(use_pointer=False) → torch DataLoader
                       └─ PolicyValueModel (train)
+```
+
+### Imitation learning — Pointer Network
+
+```
+HDF5 file
+  └─ EpisodeReader.step(t) → StepRecord
+       ├─ StateBuilder.from_step_structured(step, player) → StructuredModelInput
+       └─ ActionCodec.encode(raw_actions, context, planets, value) → ModelLabels
+            └─ ILSample(planet_features, fleet_features, planet_mask, labels)
+                 └─ NeuralILDataset(use_pointer=True) → torch DataLoader
+                      └─ PointerNetworkModel (train)
 ```
 
 ---
@@ -110,11 +141,19 @@ from bots.neural.state_builder import StateBuilder
 sb = StateBuilder(max_planets=50, max_fleets=100)  # defaults
 print(sb.input_dim)  # 1050
 
-# from a live obs dict
-model_input = sb.from_obs(obs, player=0)
+# --- Flat mode (PolicyValueModel) ---
+model_input = sb.from_obs(obs, player=0)    # from live obs dict
+model_input = sb.from_step(step, player=0)  # from offline StepRecord
+# returns ModelInput(array: np.ndarray (1050,), context: ActionContext)
 
-# from an offline StepRecord
-model_input = sb.from_step(step, player=0)
+# --- Structured mode (PointerNetworkModel) ---
+si = sb.from_obs_structured(obs, player=0)
+si = sb.from_step_structured(step, player=0)
+# returns StructuredModelInput TypedDict:
+#   planet_features: np.ndarray (max_planets, 7) float32
+#   fleet_features:  np.ndarray (max_fleets*7,)  float32
+#   planet_mask:     np.ndarray (max_planets,)   bool  — True = real planet
+#   context:         ActionContext
 ```
 
 **Planet features** (7 per slot, zero-padded): `owner_self`, `owner_enemy`, `owner_neutral`,
@@ -145,6 +184,7 @@ index, infers target via minimum angular difference, and bins the ship fraction.
 
 `decode` runs argmax per head with masking: source is restricted to `my_planet_mask`,
 target excludes source, then computes the launch angle from raw planet positions.
+`decode` accepts either `PolicyOutput` or `PointerPolicyOutput` — same fields, same behaviour.
 
 ---
 
@@ -174,6 +214,47 @@ attention encoder without touching the heads or `NeuralBot`.
 
 ---
 
+## `PointerNetworkModel`  (`pointer_model.py`)
+
+```python
+from bots.neural.pointer_model import PointerNetworkModel, PointerNetworkConfig
+
+config = PointerNetworkConfig(
+    planet_input_dim=7,
+    fleet_input_dim=700,    # max_fleets * 7
+    planet_embed_dim=64,
+    global_dim=128,
+    max_planets=50,
+    max_fleets=100,
+    n_amount_bins=5,
+    dropout=0.1,
+)
+model = PointerNetworkModel(config)
+
+# Forward pass
+import torch
+B = 4
+planet_features = torch.randn(B, 50, 7)   # (batch, max_planets, 7)
+fleet_features  = torch.randn(B, 700)     # (batch, max_fleets*7)
+planet_mask     = torch.ones(B, 50, dtype=torch.bool)
+planet_mask[:, 30:] = False               # mark slots 30-49 as padding
+
+output = model(planet_features, fleet_features, planet_mask)  # PointerPolicyOutput
+print(output.source_logits.shape)   # (B, 50)
+print(output.value.shape)           # (B, 1)  — tanh
+```
+
+**Architecture:**
+1. `planet_encoder` (shared MLP 7 → 64 → 64 with LayerNorm + dropout) embeds every planet slot independently.
+2. `fleet_proj` (Linear 700 → 64) and `global_proj` (Linear 128 → 128, where 128 = global_dim) project fleet and global context.
+3. **Source attention**: query from global context, key from planet embeddings; dot product scaled by `√planet_embed_dim`. Padding slots (where `planet_mask = False`) receive `-inf` logits before softmax.
+4. **Target attention**: conditioned on a soft source embedding (weighted sum via source probabilities); same masking, plus the attended source slot is additionally masked out.
+5. `action_type_head`, `amount_head`, `value_head` are shared linear heads on the global context.
+
+`PointerPolicyOutput` has the same fields as `PolicyOutput` so `ActionCodec.decode()` works with both.
+
+---
+
 ## `NeuralBot`  (`bot.py`)
 
 ```python
@@ -193,17 +274,22 @@ bot = NeuralBot(
 actions = bot.act(obs)   # works with dict obs or object obs
 ```
 
+`NeuralBot.act()` automatically detects whether the wrapped model is a `PointerNetworkModel`
+and calls `from_obs_structured` instead of `from_obs`. No caller changes required.
+
 ### Loading a trained checkpoint
 
 ```python
 bot = NeuralBot.load("path/to/checkpoint.pt", device="cpu")
 ```
 
-Checkpoint format (what `torch.save` should receive):
+The checkpoint stores a `model_type` key (`"flat"` or `"pointer"`) so `NeuralBot.load()`
+instantiates the correct class automatically. Checkpoint format (what `torch.save` should receive):
 
 ```python
 {
-    "config": PolicyValueConfig(...),
+    "config": PolicyValueConfig(...),   # or PointerNetworkConfig(...)
+    "model_type": "flat",               # or "pointer"
     "state_dict": model.state_dict(),
     "max_planets": 50,
     "max_fleets": 100,
