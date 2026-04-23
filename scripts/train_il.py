@@ -49,7 +49,8 @@ def main():
         )
         model = PlanetPolicyModel(planet_cfg)
         state_builder = StateBuilderV2(max_planets=planet_cfg.max_planets, max_fleets=planet_cfg.max_fleets)
-        codec = ActionCodecV2(n_amount_bins=planet_cfg.n_amount_bins)
+        angular_diff_threshold = getattr(config, "angular_diff_threshold", 0.7853981633974483)
+        codec = ActionCodecV2(n_amount_bins=planet_cfg.n_amount_bins, angular_diff_threshold=angular_diff_threshold)
     elif model_type == "pointer":
         # Remove model_type before passing to dataclass
         cfg_dict = {k: v for k, v in config.model_config.items() if k != "model_type"}

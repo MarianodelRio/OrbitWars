@@ -31,9 +31,12 @@ NEURAL_BOT_DIR = os.path.join(_ROOT, "bots", "neural")
 SOURCE_FILES = [
     "types.py",
     "state_builder.py",
+    "state_builder_v2.py",
     "action_codec.py",
+    "action_codec_v2.py",
     "model.py",
     "pointer_model.py",
+    "planet_policy_model.py",
     "bot.py",
 ]
 
@@ -114,18 +117,34 @@ def agent(obs, config=None):
         import torch
         _data = base64.b64decode(_CHECKPOINT_B64)
         _ckpt = torch.load(io.BytesIO(_data), map_location="cpu", weights_only=False)
-        _config = _ckpt["config"]
-        _max_planets = _ckpt.get("max_planets", _config.max_planets)
-        _max_fleets = _ckpt.get("max_fleets", 100)
-        _n_amount_bins = _ckpt.get("n_amount_bins", _config.n_amount_bins)
         _model_type = _ckpt.get("model_type", "flat")
-        if _model_type == "pointer":
+        if _model_type == "planet_policy":
+            _cfg_dict = _ckpt["config"]
+            _config = PlanetPolicyConfig(**_cfg_dict)
+            _model = PlanetPolicyModel(_config)
+            _model.load_state_dict(_ckpt["state_dict"])
+            _state_builder = StateBuilderV2(
+                max_planets=_config.max_planets, max_fleets=_config.max_fleets
+            )
+            _codec = ActionCodecV2(n_amount_bins=_config.n_amount_bins)
+        elif _model_type == "pointer":
+            _config = _ckpt["config"]
+            _max_planets = _ckpt.get("max_planets", _config.max_planets)
+            _max_fleets = _ckpt.get("max_fleets", 100)
+            _n_amount_bins = _ckpt.get("n_amount_bins", _config.n_amount_bins)
             _model = PointerNetworkModel(_config)
+            _model.load_state_dict(_ckpt["state_dict"])
+            _state_builder = StateBuilder(max_planets=_max_planets, max_fleets=_max_fleets)
+            _codec = ActionCodec(n_amount_bins=_n_amount_bins)
         else:
+            _config = _ckpt["config"]
+            _max_planets = _ckpt.get("max_planets", _config.max_planets)
+            _max_fleets = _ckpt.get("max_fleets", 100)
+            _n_amount_bins = _ckpt.get("n_amount_bins", _config.n_amount_bins)
             _model = PolicyValueModel(_config)
-        _model.load_state_dict(_ckpt["state_dict"])
-        _state_builder = StateBuilder(max_planets=_max_planets, max_fleets=_max_fleets)
-        _codec = ActionCodec(n_amount_bins=_n_amount_bins)
+            _model.load_state_dict(_ckpt["state_dict"])
+            _state_builder = StateBuilder(max_planets=_max_planets, max_fleets=_max_fleets)
+            _codec = ActionCodec(n_amount_bins=_n_amount_bins)
         _bot = NeuralBot(model=_model, state_builder=_state_builder, codec=_codec, device="cpu")
     return _bot.act(obs, config)
 """

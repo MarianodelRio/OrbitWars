@@ -29,6 +29,7 @@ class RunConfig:
     value_loss_weight: float = 0.5
     use_class_weights: bool = True
     resume_from: str | None = None
+    angular_diff_threshold: float = 0.7853981633974483  # π/4
 
     @classmethod
     def from_json(cls, path: Path) -> "RunConfig":

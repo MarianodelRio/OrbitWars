@@ -5,6 +5,8 @@ Do not edit manually.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import TypedDict
 import math
 import numpy as np
 import torch
@@ -40,11 +42,27 @@ class ModelLabels:
     value_target: float
 
 
+@dataclass
+class PerPlanetLabels:
+    planet_action_types: np.ndarray   # shape (max_planets,) int32 — 0=NO_OP, 1=LAUNCH, -1=padding
+    planet_target_idxs: np.ndarray    # shape (max_planets,) int32 — -1=padding or suppressed
+    planet_amount_bins: np.ndarray    # shape (max_planets,) int32 — -1=padding or NO_OP
+    my_planet_mask: np.ndarray        # shape (max_planets,) bool
+    value_target: float
+
+
 # === state_builder.py ===
 """StateBuilder: converts a StepRecord or live obs dict into a padded, normalized ModelInput."""
 
 
 
+
+
+class StructuredModelInput(TypedDict):
+    planet_features: np.ndarray   # (max_planets, 7)  float32
+    fleet_features: np.ndarray    # (max_fleets * 7,) float32
+    planet_mask: np.ndarray       # (max_planets,)    bool — True = real planet
+    context: ActionContext
 
 
 class StateBuilder:
@@ -72,8 +90,20 @@ class StateBuilder:
 
         return self._build(planets, fleets, player)
 
+    def from_obs_structured(self, obs: dict, player: int) -> StructuredModelInput:
+        raw_planets = obs["planets"]
+        raw_fleets = obs["fleets"]
+
+        planets = np.array(raw_planets, dtype=np.float32) if len(raw_planets) > 0 else np.empty((0, 7), dtype=np.float32)
+        fleets = np.array(raw_fleets, dtype=np.float32) if len(raw_fleets) > 0 else np.empty((0, 7), dtype=np.float32)
+
+        return self._build_structured(planets, fleets, player)
+
     def from_step(self, step: StepRecord, player: int) -> ModelInput:
         return self._build(step.planets, step.fleets, player)
+
+    def from_step_structured(self, step: StepRecord, player: int) -> StructuredModelInput:
+        return self._build_structured(step.planets, step.fleets, player)
 
     def __call__(self, step: StepRecord, player: int) -> ModelInput:
         return self.from_step(step, player)
@@ -82,6 +112,16 @@ class StateBuilder:
         context = self._build_context(planets, player)
         array = self._build_array(planets, fleets, player)
         return ModelInput(array=array, context=context)
+
+    def _build_structured(self, planets: np.ndarray, fleets: np.ndarray, player: int) -> StructuredModelInput:
+        context = self._build_context(planets, player)
+        planet_features, fleet_features, planet_mask = self._build_structured_arrays(planets, fleets, player)
+        return StructuredModelInput(
+            planet_features=planet_features,
+            fleet_features=fleet_features,
+            planet_mask=planet_mask,
+            context=context,
+        )
 
     def _build_context(self, planets: np.ndarray, player: int) -> ActionContext:
         if planets.shape[0] == 0:
@@ -143,6 +183,212 @@ class StateBuilder:
             out[offset + 6] = float(np.clip(ships / 200.0, 0.0, 1.0))
 
         return out
+
+    def _build_structured_arrays(
+        self, planets: np.ndarray, fleets: np.ndarray, player: int
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Return (planet_features, fleet_features, planet_mask).
+
+        planet_features : (max_planets, 7)   float32 — padded with zeros
+        fleet_features  : (max_fleets * 7,)  float32 — flat, padded with zeros
+        planet_mask     : (max_planets,)     bool    — True = real planet slot
+        """
+        planet_features = np.zeros((self.max_planets, 7), dtype=np.float32)
+        planet_mask = np.zeros(self.max_planets, dtype=bool)
+        fleet_features = np.zeros(self.max_fleets * 7, dtype=np.float32)
+
+        n_planets = min(planets.shape[0], self.max_planets)
+        for i in range(n_planets):
+            row = planets[i]
+            owner = row[1]
+            planet_features[i, 0] = float(owner == player)
+            planet_features[i, 1] = float(owner not in (-1, player))
+            planet_features[i, 2] = float(owner == -1)
+            planet_features[i, 3] = row[2] / 100.0   # x
+            planet_features[i, 4] = row[3] / 100.0   # y
+            planet_features[i, 5] = float(np.clip(row[5] / 200.0, 0.0, 1.0))  # ships
+            planet_features[i, 6] = row[6] / 5.0     # production
+            planet_mask[i] = True
+
+        n_fleets = min(fleets.shape[0], self.max_fleets)
+        for i in range(n_fleets):
+            row = fleets[i]
+            owner = row[1]
+            offset = i * 7
+            fleet_features[offset + 0] = float(owner == player)
+            fleet_features[offset + 1] = float(owner != player)
+            fleet_features[offset + 2] = row[2] / 100.0   # x
+            fleet_features[offset + 3] = row[3] / 100.0   # y
+            fleet_features[offset + 4] = math.sin(row[4])  # angle sin
+            fleet_features[offset + 5] = math.cos(row[4])  # angle cos
+            fleet_features[offset + 6] = float(np.clip(row[6] / 200.0, 0.0, 1.0))  # ships
+
+        return planet_features, fleet_features, planet_mask
+
+
+# === state_builder_v2.py ===
+"""StateBuilderV2: converts a StepRecord or live obs dict into StructuredStateV2 tensors."""
+
+
+
+
+
+class StructuredStateV2(TypedDict):
+    planet_features: np.ndarray   # (max_planets, 10)  float32
+    fleet_features: np.ndarray    # (max_fleets, 8)    float32
+    fleet_mask: np.ndarray        # (max_fleets,)      bool
+    planet_mask: np.ndarray       # (max_planets,)     bool
+    global_features: np.ndarray   # (4,)               float32
+    context: ActionContext
+
+
+class StateBuilderV2:
+    def __init__(self, max_planets: int = 50, max_fleets: int = 200) -> None:
+        self.max_planets = max_planets
+        self.max_fleets = max_fleets
+
+    def from_obs(self, obs: dict, player: int) -> StructuredStateV2:
+        raw_planets = obs.get("planets", [])
+        raw_fleets = obs.get("fleets", [])
+
+        if len(raw_planets) == 0:
+            planets = np.empty((0, 7), dtype=np.float32)
+        else:
+            planets = np.array(raw_planets, dtype=np.float32)
+
+        if len(raw_fleets) == 0:
+            fleets = np.empty((0, 7), dtype=np.float32)
+        else:
+            fleets = np.array(raw_fleets, dtype=np.float32)
+
+        comet_ids = np.array(obs.get("comet_planet_ids", []), dtype=np.int32)
+        turn = int(obs.get("step", 0))
+
+        return self._build_v2(planets, fleets, comet_ids, turn, player)
+
+    def from_step(self, step: StepRecord, player: int) -> StructuredStateV2:
+        return self._build_v2(step.planets, step.fleets, step.comet_planet_ids, step.turn, player)
+
+    def from_obs_structured(self, obs: dict, player: int) -> StructuredStateV2:
+        return self.from_obs(obs, player)
+
+    def from_step_structured(self, step: StepRecord, player: int) -> StructuredStateV2:
+        return self.from_step(step, player)
+
+    def __call__(self, step: StepRecord, player: int) -> StructuredStateV2:
+        return self.from_step(step, player)
+
+    def _build_context(self, planets: np.ndarray, player: int) -> ActionContext:
+        if planets.shape[0] == 0:
+            return ActionContext(
+                planet_ids=np.empty(0, dtype=np.int32),
+                planet_positions=np.empty((0, 2), dtype=np.float32),
+                my_planet_mask=np.empty(0, dtype=bool),
+                n_planets=0,
+            )
+
+        planet_ids = planets[:, 0].astype(np.int32)
+        planet_positions = planets[:, 2:4].astype(np.float32)
+        my_planet_mask = (planets[:, 1] == player)
+        n_planets = len(planet_ids)
+
+        return ActionContext(
+            planet_ids=planet_ids,
+            planet_positions=planet_positions,
+            my_planet_mask=my_planet_mask,
+            n_planets=n_planets,
+        )
+
+    def _build_v2(
+        self,
+        planets: np.ndarray,
+        fleets: np.ndarray,
+        comet_planet_ids: np.ndarray,
+        turn: int,
+        player: int,
+    ) -> StructuredStateV2:
+        planet_features = np.zeros((self.max_planets, 10), dtype=np.float32)
+        planet_mask = np.zeros(self.max_planets, dtype=bool)
+        fleet_features = np.zeros((self.max_fleets, 8), dtype=np.float32)
+        fleet_mask = np.zeros(self.max_fleets, dtype=bool)
+
+        comet_set = set(comet_planet_ids.tolist())
+
+        # Fill planet slots
+        n_planets = min(planets.shape[0], self.max_planets)
+        for i in range(n_planets):
+            row = planets[i]
+            owner = row[1]
+            x = row[2]
+            y = row[3]
+            radius = row[4]
+            ships = row[5]
+            production = row[6]
+            planet_id = int(row[0])
+
+            planet_features[i, 0] = float(owner == player)
+            planet_features[i, 1] = float(owner not in (-1, player))
+            planet_features[i, 2] = float(owner == -1)
+            planet_features[i, 3] = x / 100.0
+            planet_features[i, 4] = y / 100.0
+            planet_features[i, 5] = float(np.clip(ships / 200.0, 0.0, 1.0))
+            planet_features[i, 6] = production / 5.0
+            planet_features[i, 7] = radius / 3.0
+            planet_features[i, 8] = float(planet_id in comet_set)
+            planet_features[i, 9] = math.hypot(x - 50.0, y - 50.0) / 50.0
+            planet_mask[i] = True
+
+        # Fill fleet slots
+        n_fleets = min(fleets.shape[0], self.max_fleets)
+        for i in range(n_fleets):
+            row = fleets[i]
+            owner = row[1]
+            x = row[2]
+            y = row[3]
+            angle = row[4]
+            ships = row[6]
+
+            fleet_features[i, 0] = float(owner == player)
+            fleet_features[i, 1] = float(owner != player)
+            fleet_features[i, 2] = x / 100.0
+            fleet_features[i, 3] = y / 100.0
+            fleet_features[i, 4] = math.sin(angle)
+            fleet_features[i, 5] = math.cos(angle)
+            fleet_features[i, 6] = float(np.clip(ships / 200.0, 0.0, 1.0))
+            fleet_features[i, 7] = math.hypot(x - 50.0, y - 50.0) / 50.0
+            fleet_mask[i] = True
+
+        # Compute global features
+        global_features = np.zeros(4, dtype=np.float32)
+        global_features[0] = turn / 500.0
+
+        if planets.shape[0] > 0:
+            total_ships = float(planets[:, 5].sum())
+            if total_ships > 0:
+                my_ships = float(planets[planets[:, 1] == player, 5].sum())
+                global_features[1] = my_ships / total_ships
+            else:
+                global_features[1] = 0.5
+
+            total_planets = float(planets.shape[0])
+            my_planets = float((planets[:, 1] == player).sum())
+            global_features[2] = my_planets / total_planets
+        else:
+            global_features[1] = 0.5
+            global_features[2] = 0.0
+
+        global_features[3] = min(fleets.shape[0], self.max_fleets) / 200.0
+
+        context = self._build_context(planets, player)
+
+        return StructuredStateV2(
+            planet_features=planet_features,
+            fleet_features=fleet_features,
+            fleet_mask=fleet_mask,
+            planet_mask=planet_mask,
+            global_features=global_features,
+            context=context,
+        )
 
 
 # === action_codec.py ===
@@ -306,6 +552,192 @@ class ActionCodec:
         return [[source_planet_id, angle, n_ships]]
 
 
+# === action_codec_v2.py ===
+"""ActionCodecV2: per-planet encode/decode for PlanetPolicyModel."""
+
+
+
+
+
+class ActionCodecV2:
+    NO_OP = 0
+    LAUNCH = 1
+
+    def __init__(self, n_amount_bins: int = 5, angular_diff_threshold: float = math.pi / 4) -> None:
+        self.n_amount_bins = n_amount_bins
+        self.BINS = [0.1, 0.25, 0.5, 0.75, 1.0]
+        self.angular_diff_threshold = angular_diff_threshold
+
+    def encode_per_planet(
+        self,
+        raw_actions: np.ndarray,
+        context: ActionContext,
+        planets: np.ndarray,
+        value_target: float,
+        max_planets: int,
+    ) -> PerPlanetLabels:
+        """Encode raw actions into per-planet labels.
+
+        raw_actions: (n_actions, 3) float array — [from_planet_id, angle, ships]
+        context: ActionContext for the current turn
+        planets: (n_planets, 7) float32 — raw planet array (col 5 = ships)
+        value_target: float game outcome for this player
+        max_planets: padding target
+        """
+        planet_action_types = np.full(max_planets, -1, dtype=np.int32)
+        planet_target_idxs = np.full(max_planets, -1, dtype=np.int32)
+        planet_amount_bins = np.full(max_planets, -1, dtype=np.int32)
+        my_planet_mask = np.zeros(max_planets, dtype=bool)
+
+        # Build action map: from_planet_id -> action row (keep highest ship count)
+        action_map: dict[int, np.ndarray] = {}
+        if raw_actions.shape[0] > 0:
+            for k in range(raw_actions.shape[0]):
+                row = raw_actions[k]
+                pid = int(row[0])
+                if pid not in action_map or float(row[2]) > float(action_map[pid][2]):
+                    action_map[pid] = row
+
+        n = min(context.n_planets, max_planets)
+        bins_arr = np.array(self.BINS, dtype=np.float32)
+
+        for i in range(n):
+            planet_id = int(context.planet_ids[i])
+            if context.my_planet_mask[i]:
+                my_planet_mask[i] = True
+                if planet_id in action_map:
+                    planet_action_types[i] = self.LAUNCH
+
+                    # Angular-diff target inference (same logic as action_codec.py lines 58-76)
+                    action_row = action_map[planet_id]
+                    recorded_angle = float(action_row[1])
+                    source_pos = context.planet_positions[i]
+                    source_x = float(source_pos[0])
+                    source_y = float(source_pos[1])
+
+                    best_idx = -1
+                    best_diff = float("inf")
+                    for j in range(context.n_planets):
+                        if j == i:
+                            continue
+                        cand_pos = context.planet_positions[j]
+                        dx = float(cand_pos[0]) - source_x
+                        dy = float(cand_pos[1]) - source_y
+                        direction = math.atan2(dy, dx)
+                        diff_raw = direction - recorded_angle
+                        angular_diff = abs(((diff_raw + math.pi) % (2 * math.pi)) - math.pi)
+                        if angular_diff < best_diff:
+                            best_diff = angular_diff
+                            best_idx = j
+
+                    if best_diff > self.angular_diff_threshold:
+                        planet_target_idxs[i] = -1
+                    else:
+                        planet_target_idxs[i] = best_idx
+
+                    # Quantize ship fraction to amount bin
+                    n_ships = float(action_row[2])
+                    source_ships = float(planets[i, 5]) if planets.shape[0] > i else 0.0
+                    if source_ships <= 0:
+                        fraction = self.BINS[-1]
+                    else:
+                        fraction = float(np.clip(n_ships / source_ships, 0.0, 1.0))
+                    planet_amount_bins[i] = int(np.argmin(np.abs(bins_arr - fraction)))
+                else:
+                    planet_action_types[i] = self.NO_OP
+                    # target and amount stay at -1
+            # else: my_planet_mask[i] is False, all three label arrays stay at -1 (PADDING)
+
+        return PerPlanetLabels(
+            planet_action_types=planet_action_types,
+            planet_target_idxs=planet_target_idxs,
+            planet_amount_bins=planet_amount_bins,
+            my_planet_mask=my_planet_mask,
+            value_target=value_target,
+        )
+
+    def decode_per_planet(
+        self,
+        output,
+        context: ActionContext,
+        planets: np.ndarray,
+        max_planets: int,
+    ) -> list:
+        """Decode PlanetPolicyOutput into a list of game actions.
+
+        output: PlanetPolicyOutput (batch dim already squeezed by caller)
+        context: ActionContext for the current turn
+        planets: (max_planets, 10) float32 — normalized planet_features (col 5 = ships/200)
+        max_planets: size of the padded planet dimension
+        Returns: list of [planet_id, angle, n_ships] actions
+        """
+        # Import here to avoid circular import
+
+        if context.n_planets == 0:
+            return []
+
+        # Convert tensors to numpy
+        action_type_logits = output.action_type_logits
+        if hasattr(action_type_logits, "cpu"):
+            action_type_logits = action_type_logits.cpu().numpy()
+
+        target_logits = output.target_logits
+        if hasattr(target_logits, "cpu"):
+            target_logits = target_logits.cpu().numpy()
+
+        amount_logits = output.amount_logits
+        if hasattr(amount_logits, "cpu"):
+            amount_logits = amount_logits.cpu().numpy()
+
+        # action_type_logits: (max_planets, 2)
+        # target_logits: (max_planets, max_planets)
+        # amount_logits: (max_planets, 5)
+
+        actions = []
+        n = min(context.n_planets, max_planets)
+
+        for i in range(n):
+            if not context.my_planet_mask[i]:
+                continue
+
+            if int(np.argmax(action_type_logits[i])) == self.NO_OP:
+                continue
+
+            # LAUNCH
+            target_logits_i = target_logits[i, :context.n_planets].copy()
+            target_logits_i[i] = -np.inf  # mask self
+
+            # Also mask positions where planet_ids match (same planet id as source)
+            for j in range(context.n_planets):
+                if context.planet_ids[j] == context.planet_ids[i]:
+                    target_logits_i[j] = -np.inf
+
+            if np.all(np.isneginf(target_logits_i)):
+                continue
+
+            target_idx = int(np.argmax(target_logits_i))
+
+            amount_bin = int(np.argmax(amount_logits[i]))
+            amount_bin = int(np.clip(amount_bin, 0, len(self.BINS) - 1))
+
+            # Reverse normalization: col 5 in planet_features is ships/200
+            source_ships = float(planets[i, 5]) * 200.0
+            n_ships = self.BINS[amount_bin] * source_ships
+            if n_ships < 1.0:
+                continue
+
+            source_pos = context.planet_positions[i]
+            target_pos = context.planet_positions[target_idx]
+            angle = math.atan2(
+                float(target_pos[1]) - float(source_pos[1]),
+                float(target_pos[0]) - float(source_pos[0]),
+            )
+
+            actions.append([int(context.planet_ids[i]), angle, n_ships])
+
+        return actions
+
+
 # === model.py ===
 """PolicyValueModel and PolicyOutput — PyTorch neural network for Orbit Wars."""
 
@@ -365,8 +797,368 @@ class PolicyValueModel(nn.Module):
         )
 
 
+# === pointer_model.py ===
+"""PointerNetworkModel — attention-based policy/value model for Orbit Wars.
+
+Replaces the flat MLP (PolicyValueModel) with a model that has proper inductive
+bias for planet selection:
+  - Each planet is encoded individually with a shared MLP (planet_encoder).
+  - Global state = mean-pool of planet embeddings + projected fleet features.
+  - Source head: dot-product attention  score_i = query(global) · key(planet_i)
+  - Target head: conditioned pointer    score_i = query(global + source_emb) · key(planet_i)
+  - amount / value / action_type heads: linear from global representation.
+
+Expects structured batch tensors (not a flat 1D state vector).  See StateBuilder
+and NeuralILDataset for how to produce these.
+"""
+
+
+
+
+
+# ---------------------------------------------------------------------------
+# Config
+# ---------------------------------------------------------------------------
+
+@dataclass
+class PointerNetworkConfig:
+    planet_input_dim: int = 7
+    fleet_input_dim: int = 700      # max_fleets * 7 = 100 * 7
+    planet_embed_dim: int = 64
+    global_dim: int = 128
+    max_planets: int = 50
+    max_fleets: int = 100
+    n_amount_bins: int = 5
+    dropout: float = 0.1
+
+
+# ---------------------------------------------------------------------------
+# Output
+# ---------------------------------------------------------------------------
+
+@dataclass
+class PointerPolicyOutput:
+    action_type_logits: torch.Tensor  # (B, 2)
+    source_logits: torch.Tensor       # (B, max_planets)
+    target_logits: torch.Tensor       # (B, max_planets)
+    amount_logits: torch.Tensor       # (B, n_amount_bins)
+    value: torch.Tensor               # (B, 1)
+
+
+# ---------------------------------------------------------------------------
+# Model
+# ---------------------------------------------------------------------------
+
+class PointerNetworkModel(nn.Module):
+    """Pointer-network policy/value model.
+
+    Forward inputs:
+        planet_features : (B, max_planets, planet_input_dim)
+        fleet_features  : (B, fleet_input_dim)
+        planet_mask     : (B, max_planets)  bool — True for real planets, False for padding
+
+    Forward output: PointerPolicyOutput
+    """
+
+    def __init__(self, config: PointerNetworkConfig) -> None:
+        super().__init__()
+        self.config = config
+
+        E = config.planet_embed_dim    # 64
+        G = config.global_dim          # 128
+
+        # ── Encoders ──────────────────────────────────────────────────────
+        self.planet_encoder = nn.Sequential(
+            nn.Linear(config.planet_input_dim, E),
+            nn.ReLU(),
+            nn.Dropout(config.dropout),
+            nn.Linear(E, E),
+            nn.ReLU(),
+        )
+
+        self.fleet_proj = nn.Sequential(
+            nn.Linear(config.fleet_input_dim, E),
+            nn.ReLU(),
+        )
+
+        self.global_proj = nn.Sequential(
+            nn.Linear(E + E, G),
+            nn.ReLU(),
+            nn.Dropout(config.dropout),
+        )
+
+        # ── Pointer heads ─────────────────────────────────────────────────
+        self.source_query = nn.Linear(G, E, bias=False)
+        self.source_key   = nn.Linear(E, E, bias=False)
+
+        # Target query is conditioned on global + soft source embedding
+        self.target_query = nn.Linear(G + E, E, bias=False)
+        self.target_key   = nn.Linear(E, E, bias=False)
+
+        # ── Output heads ──────────────────────────────────────────────────
+        self.action_type_head = nn.Linear(G, 2)
+        self.amount_head      = nn.Linear(G, config.n_amount_bins)
+        self.value_head       = nn.Linear(G, 1)
+
+        self._scale = math.sqrt(E)
+
+    # -----------------------------------------------------------------------
+
+    def forward(
+        self,
+        planet_features: torch.Tensor,
+        fleet_features: torch.Tensor,
+        planet_mask: torch.Tensor,
+    ) -> PointerPolicyOutput:
+        """
+        planet_features : (B, max_planets, 7)
+        fleet_features  : (B, 700)
+        planet_mask     : (B, max_planets)  bool — True = real planet
+        """
+        B, P, _ = planet_features.shape
+
+        # 1. Encode each planet individually with shared MLP
+        #    planet_features: (B, P, 7) → reshape to (B*P, 7) → encode → (B, P, E)
+        pf_flat = planet_features.view(B * P, -1)
+        planet_emb = self.planet_encoder(pf_flat).view(B, P, -1)  # (B, P, E)
+
+        # 2. Masked mean-pool planet embeddings → (B, E)
+        #    Expand mask: (B, P) → (B, P, 1)
+        mask_f = planet_mask.float().unsqueeze(-1)          # (B, P, 1)
+        n_real = mask_f.sum(dim=1).clamp(min=1)             # (B, 1)
+        planet_pool = (planet_emb * mask_f).sum(dim=1) / n_real  # (B, E)
+
+        # 3. Encode fleet features → (B, E)
+        fleet_emb = self.fleet_proj(fleet_features)         # (B, E)
+
+        # 4. Global representation → (B, G)
+        global_repr = self.global_proj(
+            torch.cat([planet_pool, fleet_emb], dim=-1)
+        )                                                    # (B, G)
+
+        # 5. Source pointer: query over planet keys
+        #    q: (B, E)  k: (B, P, E)  logits: (B, P)
+        q_src = self.source_query(global_repr)               # (B, E)
+        k_src = self.source_key(planet_emb)                  # (B, P, E)
+        source_logits = torch.bmm(
+            k_src, q_src.unsqueeze(-1)
+        ).squeeze(-1) / self._scale                          # (B, P)
+
+        # Mask padding positions to -inf
+        source_logits = source_logits.masked_fill(~planet_mask, float("-inf"))
+
+        # 6. Soft source embedding (differentiable) — used to condition target query
+        src_weights = torch.softmax(source_logits, dim=-1)   # (B, P)  — NaN-safe: at least 1 real planet
+        source_emb = torch.bmm(
+            src_weights.unsqueeze(1), planet_emb
+        ).squeeze(1)                                         # (B, E)
+
+        # 7. Target pointer: conditioned on global + source_emb
+        q_tgt = self.target_query(
+            torch.cat([global_repr, source_emb], dim=-1)
+        )                                                    # (B, E)
+        k_tgt = self.target_key(planet_emb)                  # (B, P, E)
+        target_logits = torch.bmm(
+            k_tgt, q_tgt.unsqueeze(-1)
+        ).squeeze(-1) / self._scale                          # (B, P)
+        target_logits = target_logits.masked_fill(~planet_mask, float("-inf"))
+
+        # 8. Other heads from global_repr
+        action_type_logits = self.action_type_head(global_repr)   # (B, 2)
+        amount_logits      = self.amount_head(global_repr)        # (B, n_bins)
+        value              = torch.tanh(self.value_head(global_repr))  # (B, 1)
+
+        return PointerPolicyOutput(
+            action_type_logits=action_type_logits,
+            source_logits=source_logits,
+            target_logits=target_logits,
+            amount_logits=amount_logits,
+            value=value,
+        )
+
+
+# === planet_policy_model.py ===
+"""PlanetPolicyModel — per-planet entity-centric policy/value model for Orbit Wars."""
+
+
+
+
+
+# ---------------------------------------------------------------------------
+# Config
+# ---------------------------------------------------------------------------
+
+@dataclass
+class PlanetPolicyConfig:
+    Dp: int = 10             # planet feature dim
+    Df: int = 8              # fleet feature dim
+    Dg: int = 4              # global feature dim
+    E: int = 64              # planet embed dim
+    F: int = 32              # fleet embed dim
+    G: int = 128             # global repr dim
+    max_planets: int = 50
+    max_fleets: int = 200
+    n_amount_bins: int = 5
+    dropout: float = 0.1
+    n_attn_heads: int = 2
+
+
+# ---------------------------------------------------------------------------
+# Output
+# ---------------------------------------------------------------------------
+
+@dataclass
+class PlanetPolicyOutput:
+    action_type_logits: torch.Tensor  # (B, max_planets, 2)
+    target_logits: torch.Tensor       # (B, max_planets, max_planets)
+    amount_logits: torch.Tensor       # (B, max_planets, n_amount_bins)
+    value: torch.Tensor               # (B, 1)
+
+
+# ---------------------------------------------------------------------------
+# Model
+# ---------------------------------------------------------------------------
+
+class PlanetPolicyModel(nn.Module):
+    """Per-planet entity-centric policy/value model.
+
+    Forward inputs:
+        planet_features : (B, max_planets, Dp)
+        fleet_features  : (B, max_fleets, Df)
+        fleet_mask      : (B, max_fleets)   bool — True for real fleets
+        global_features : (B, Dg)
+        planet_mask     : (B, max_planets)  bool — True for real planets
+
+    Forward output: PlanetPolicyOutput
+    """
+
+    def __init__(self, config: PlanetPolicyConfig) -> None:
+        super().__init__()
+        self.config = config
+
+        Dp = config.Dp
+        Df = config.Df
+        Dg = config.Dg
+        E = config.E
+        F = config.F
+        G = config.G
+        n_amount_bins = config.n_amount_bins
+        n_attn_heads = config.n_attn_heads
+
+        # Encoders
+        self.planet_encoder = nn.Sequential(
+            nn.Linear(Dp, E),
+            nn.ReLU(),
+            nn.Linear(E, E),
+            nn.ReLU(),
+        )
+
+        self.fleet_encoder = nn.Sequential(
+            nn.Linear(Df, F),
+            nn.ReLU(),
+        )
+
+        # Self-attention over planets
+        self.planet_attn = nn.MultiheadAttention(
+            embed_dim=E,
+            num_heads=n_attn_heads,
+            batch_first=True,
+            dropout=config.dropout,
+        )
+        self.planet_attn_norm = nn.LayerNorm(E)
+
+        # Global MLP: planet_pool (E) + fleet_ctx (F) + global_features (Dg) → G
+        self.global_mlp = nn.Sequential(
+            nn.Linear(E + F + Dg, G),
+            nn.ReLU(),
+            nn.Linear(G, G),
+        )
+
+        # Per-planet heads (operate on h = [planet_ctx, global_repr_expanded] of dim E+G)
+        self.action_type_head = nn.Linear(E + G, 2)
+        self.amount_head = nn.Linear(E + G, n_amount_bins)
+
+        # Pointer network heads
+        self.W_query = nn.Linear(E + G, E, bias=False)   # per-planet query
+        self.W_key = nn.Linear(E, E, bias=False)          # shared key projection
+
+        # Value head from global repr
+        self.value_head = nn.Linear(G, 1)
+
+        self._scale = math.sqrt(E)
+
+    def forward(
+        self,
+        planet_features: torch.Tensor,
+        fleet_features: torch.Tensor,
+        fleet_mask: torch.Tensor,
+        global_features: torch.Tensor,
+        planet_mask: torch.Tensor,
+    ) -> PlanetPolicyOutput:
+        """
+        planet_features : (B, max_planets, Dp)
+        fleet_features  : (B, max_fleets, Df)
+        fleet_mask      : (B, max_fleets)   bool — True = real fleet
+        global_features : (B, Dg)
+        planet_mask     : (B, max_planets)  bool — True = real planet
+        """
+        B, P, _ = planet_features.shape
+
+        # Stage 1: Encode each planet
+        planet_emb = self.planet_encoder(
+            planet_features.view(B * P, -1)
+        ).view(B, P, self.config.E)   # (B, P, E)
+
+        # Stage 2: Encode fleets and masked mean-pool
+        fleet_emb_all = self.fleet_encoder(fleet_features)   # (B, max_fleets, F)
+        fleet_mask_f = fleet_mask.float().unsqueeze(-1)       # (B, max_fleets, 1)
+        n_real_f = fleet_mask_f.sum(dim=1).clamp(min=1)       # (B, 1)
+        fleet_ctx = (fleet_emb_all * fleet_mask_f).sum(dim=1) / n_real_f  # (B, F)
+
+        # Stage 3: Self-attention over planets
+        # key_padding_mask: True means "ignore" in nn.MultiheadAttention
+        attn_out, _ = self.planet_attn(
+            planet_emb, planet_emb, planet_emb,
+            key_padding_mask=~planet_mask,
+        )   # (B, P, E)
+        planet_ctx = self.planet_attn_norm(planet_emb + attn_out)   # (B, P, E)
+
+        # Stage 4: Global representation
+        planet_mask_f = planet_mask.float().unsqueeze(-1)       # (B, P, 1)
+        n_real_p = planet_mask_f.sum(dim=1).clamp(min=1)         # (B, 1)
+        planet_pool = (planet_ctx * planet_mask_f).sum(dim=1) / n_real_p  # (B, E)
+
+        global_input = torch.cat([planet_pool, fleet_ctx, global_features], dim=-1)  # (B, E+F+Dg)
+        global_repr = self.global_mlp(global_input)   # (B, G)
+
+        # Stage 5: Per-planet outputs
+        # h: (B, P, E+G) — per-planet context concatenated with global
+        h = torch.cat(
+            [planet_ctx, global_repr.unsqueeze(1).expand(-1, P, -1)],
+            dim=-1,
+        )   # (B, P, E+G)
+
+        action_type_logits = self.action_type_head(h)   # (B, P, 2)
+        amount_logits = self.amount_head(h)              # (B, P, n_amount_bins)
+
+        # Pointer: queries from h, keys from planet_ctx
+        queries = self.W_query(h)                        # (B, P, E)
+        keys = self.W_key(planet_ctx)                    # (B, P, E)
+        target_logits = torch.bmm(queries, keys.transpose(1, 2)) / self._scale  # (B, P, P)
+
+        # Value head from global repr
+        value = torch.tanh(self.value_head(global_repr))   # (B, 1)
+
+        return PlanetPolicyOutput(
+            action_type_logits=action_type_logits,
+            target_logits=target_logits,
+            amount_logits=amount_logits,
+            value=value,
+        )
+
+
 # === bot.py ===
-"""NeuralBot — inference wrapper around PolicyValueModel."""
+"""NeuralBot — inference wrapper around PolicyValueModel or PointerNetworkModel."""
 
 
 
@@ -392,56 +1184,127 @@ class NeuralBot:
         return "neural"
 
     def act(self, obs, config=None) -> list:
+        is_pointer = isinstance(self.model, PointerNetworkModel)
+
         if isinstance(obs, dict):
             player = obs.get("player", 0)
             raw_planets = obs.get("planets", [])
-            model_input = self.state_builder.from_obs(obs, player)
         else:
             player = obs.player
             raw_planets = list(obs.planets) if hasattr(obs.planets, "__iter__") else obs.planets
-            model_input = self.state_builder.from_step(obs, player)
 
-        tensor = torch.from_numpy(model_input.array).unsqueeze(0).to(self.device)
+        is_planet_policy = isinstance(self.model, PlanetPolicyModel)
+
+        if is_planet_policy:
+            if isinstance(obs, dict):
+                state = self.state_builder.from_obs(obs, player)
+            else:
+                state = self.state_builder.from_step(obs, player)
+            pf = torch.tensor(state["planet_features"], dtype=torch.float32).unsqueeze(0).to(self.device)
+            ff = torch.tensor(state["fleet_features"], dtype=torch.float32).unsqueeze(0).to(self.device)
+            fm = torch.tensor(state["fleet_mask"], dtype=torch.bool).unsqueeze(0).to(self.device)
+            gf = torch.tensor(state["global_features"], dtype=torch.float32).unsqueeze(0).to(self.device)
+            pm = torch.tensor(state["planet_mask"], dtype=torch.bool).unsqueeze(0).to(self.device)
+            with torch.no_grad():
+                output = self.model(pf, ff, fm, gf, pm)
+            squeezed = PlanetPolicyOutput(
+                action_type_logits=output.action_type_logits.squeeze(0),
+                target_logits=output.target_logits.squeeze(0),
+                amount_logits=output.amount_logits.squeeze(0),
+                value=output.value,
+            )
+            planets_arr = state["planet_features"]
+            return self.codec.decode_per_planet(squeezed, state["context"], planets_arr, self.model.config.max_planets)
+
+        if isinstance(obs, dict):
+            if is_pointer:
+                structured = self.state_builder.from_obs_structured(obs, player)
+            else:
+                model_input = self.state_builder.from_obs(obs, player)
+        else:
+            if is_pointer:
+                structured = self.state_builder.from_step_structured(obs, player)
+            else:
+                model_input = self.state_builder.from_step(obs, player)
 
         with torch.no_grad():
-            output = self.model(tensor)
-
-        output_single = PolicyOutput(
-            action_type_logits=output.action_type_logits[0],
-            source_logits=output.source_logits[0],
-            target_logits=output.target_logits[0],
-            amount_logits=output.amount_logits[0],
-            value=output.value[0],
-        )
+            if is_pointer:
+                pf = torch.from_numpy(structured["planet_features"]).unsqueeze(0).to(self.device)
+                ff = torch.from_numpy(structured["fleet_features"]).unsqueeze(0).to(self.device)
+                pm = torch.from_numpy(structured["planet_mask"]).unsqueeze(0).to(self.device)
+                output = self.model(pf, ff, pm)
+                context = structured["context"]
+                output_single = PointerPolicyOutput(
+                    action_type_logits=output.action_type_logits[0],
+                    source_logits=output.source_logits[0],
+                    target_logits=output.target_logits[0],
+                    amount_logits=output.amount_logits[0],
+                    value=output.value[0],
+                )
+            else:
+                tensor = torch.from_numpy(model_input.array).unsqueeze(0).to(self.device)
+                output = self.model(tensor)
+                context = model_input.context
+                output_single = PolicyOutput(
+                    action_type_logits=output.action_type_logits[0],
+                    source_logits=output.source_logits[0],
+                    target_logits=output.target_logits[0],
+                    amount_logits=output.amount_logits[0],
+                    value=output.value[0],
+                )
 
         if len(raw_planets) > 0:
             planets_arr = np.array(raw_planets, dtype=np.float32)
         else:
             planets_arr = np.empty((0, 7), dtype=np.float32)
 
-        return self.codec.decode(output_single, model_input.context, planets_arr)
+        return self.codec.decode(output_single, context, planets_arr)
 
     @classmethod
     def load(cls, path: str, device: str = "cpu") -> "NeuralBot":
         """Load a NeuralBot from a checkpoint file.
 
-        Checkpoint format:
-            {
-                "config": PolicyValueConfig,
-                "state_dict": dict,
-                "max_planets": int,
-                "max_fleets": int,
-                "n_amount_bins": int,
-            }
+        Supports both flat (PolicyValueModel) and pointer (PointerNetworkModel) checkpoints.
+        The checkpoint must contain a "model_type" key ("flat" or "pointer"); if absent,
+        "flat" is assumed for backward compatibility.
         """
-        checkpoint = torch.load(path, map_location=device)
-        config: PolicyValueConfig = checkpoint["config"]
-        max_planets = checkpoint.get("max_planets", config.max_planets)
-        max_fleets = checkpoint.get("max_fleets", 100)
-        n_amount_bins = checkpoint.get("n_amount_bins", config.n_amount_bins)
+        checkpoint = torch.load(path, map_location=device, weights_only=False)
+        model_type = checkpoint.get("model_type", "flat")
 
-        model = PolicyValueModel(config)
-        model.load_state_dict(checkpoint["state_dict"])
+        if model_type == "planet_policy":
+            config_dict = checkpoint["config"]
+            config = PlanetPolicyConfig(
+                Dp=config_dict["Dp"],
+                Df=config_dict["Df"],
+                Dg=config_dict["Dg"],
+                E=config_dict["E"],
+                F=config_dict["F"],
+                G=config_dict["G"],
+                max_planets=config_dict["max_planets"],
+                max_fleets=config_dict["max_fleets"],
+                n_amount_bins=config_dict["n_amount_bins"],
+                dropout=config_dict["dropout"],
+                n_attn_heads=config_dict["n_attn_heads"],
+            )
+            model = PlanetPolicyModel(config)
+            model.load_state_dict(checkpoint["state_dict"])
+            state_builder = StateBuilderV2(max_planets=config.max_planets, max_fleets=config.max_fleets)
+            codec = ActionCodecV2(n_amount_bins=config.n_amount_bins)
+            return cls(model=model, state_builder=state_builder, codec=codec, device=device)
+        elif model_type == "pointer":
+            config: PointerNetworkConfig = checkpoint["config"]
+            model = PointerNetworkModel(config)
+            model.load_state_dict(checkpoint["state_dict"])
+            max_planets = config.max_planets
+            max_fleets = config.max_fleets
+            n_amount_bins = config.n_amount_bins
+        else:
+            config: PolicyValueConfig = checkpoint["config"]
+            max_planets = checkpoint.get("max_planets", config.max_planets)
+            max_fleets = checkpoint.get("max_fleets", 100)
+            n_amount_bins = checkpoint.get("n_amount_bins", config.n_amount_bins)
+            model = PolicyValueModel(config)
+            model.load_state_dict(checkpoint["state_dict"])
 
         state_builder = StateBuilder(max_planets=max_planets, max_fleets=max_fleets)
         codec = ActionCodec(n_amount_bins=n_amount_bins)
