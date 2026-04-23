@@ -280,11 +280,10 @@ The 16 unit tests in `test_neural_foundation.py` cover:
 
 ## What's not yet implemented
 
+The following were listed as pending and are now implemented: training loop (`training/trainers/il_trainer.py`), checkpoint saving (`training/utils/checkpointing.py`), action masking via `ignore_index=-1`.
+
 | Feature | Where to add |
 |---|---|
-| Training loop (loss, optimiser, epochs) | `training/train.py` or new `bots/neural/trainer.py` |
-| Checkpoint saving | alongside the training loop |
-| Action masking in cross-entropy loss (ignore `-1` labels) | training loop |
 | Multiple actions per turn | requires sequential decoder — deferred |
 | Attention / entity-centric encoder | swap `model.encoder` only |
 | RL fine-tuning | `OrbitWarsEnv.step()` not yet implemented |

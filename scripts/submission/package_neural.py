@@ -1,0 +1,237 @@
+"""
+Package the neural bot for Kaggle submission.
+
+Config: scripts/submission/neural_config.json
+
+Fields:
+  checkpoint_path  — path to .pt file relative to repo root (null for random weights)
+  message          — submission message
+  competition      — Kaggle competition slug (default: orbit-wars)
+  save_log         — whether to log the submission
+"""
+import base64
+import json
+import os
+import re
+import subprocess
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
+from experiments.logger import save as log_experiment
+
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_ROOT = os.path.dirname(os.path.dirname(_HERE))
+
+CONFIG_PATH = os.path.join(_HERE, "neural_config.json")
+SUBMISSION_PATH = os.path.join(_ROOT, "submission", "main.py")
+NEURAL_BOT_DIR = os.path.join(_ROOT, "bots", "neural")
+
+# Files in dependency order: each file only uses symbols defined in earlier files.
+SOURCE_FILES = [
+    "types.py",
+    "state_builder.py",
+    "action_codec.py",
+    "model.py",
+    "bot.py",
+]
+
+# Import line prefixes that must be removed from source files before concatenation.
+_SKIP_PREFIXES = (
+    "from .",        # relative imports (from .types, from .model, etc.)
+    "from bots.",    # absolute internal bots.* imports
+    "import bots.",
+    "from dataset.", # dataset.episode only used as a type hint in state_builder
+    "from __future__",  # collected separately — placed once at the very top
+)
+
+
+def _process_source(source: str, filename: str) -> tuple[set[str], str]:
+    """Strip internal/relative imports; return (kept_import_lines, code_body)."""
+    import_lines: set[str] = set()
+    code_lines: list[str] = []
+
+    for line in source.splitlines():
+        stripped = line.strip()
+        if any(stripped.startswith(p) for p in _SKIP_PREFIXES):
+            continue
+        if stripped.startswith("import ") or stripped.startswith("from "):
+            import_lines.add(line.rstrip())
+        else:
+            code_lines.append(line)
+
+    code = "\n".join(code_lines).strip()
+
+    # Remove Bot base class from NeuralBot: class NeuralBot(Bot): → class NeuralBot:
+    if filename == "bot.py":
+        code = re.sub(
+            r"class NeuralBot\s*\(\s*Bot\s*\)\s*:",
+            "class NeuralBot:",
+            code,
+        )
+
+    return import_lines, code
+
+
+def _build_agent_random() -> str:
+    return """\
+# === AGENT ENTRY POINT (random weights) ===
+_bot = None
+
+
+def agent(obs, config=None):
+    \"\"\"Entry point for Kaggle submission — random weights (no checkpoint).\"\"\"
+    global _bot
+    if _bot is None:
+        _cfg = PolicyValueConfig(
+            input_dim=StateBuilder().input_dim,
+            hidden_dims=[256, 128],
+        )
+        _bot = NeuralBot(
+            model=PolicyValueModel(_cfg),
+            state_builder=StateBuilder(),
+            codec=ActionCodec(),
+        )
+    return _bot.act(obs, config)
+"""
+
+
+def _build_agent_checkpoint(checkpoint_b64: str) -> str:
+    return f"""\
+# === CHECKPOINT EMBEDDING ===
+_CHECKPOINT_B64 = \"\"\"{checkpoint_b64}\"\"\"
+
+_bot = None
+
+
+def agent(obs, config=None):
+    \"\"\"Entry point for Kaggle submission — loads embedded checkpoint on first call.\"\"\"
+    global _bot
+    if _bot is None:
+        import base64
+        import io
+        import torch
+        _data = base64.b64decode(_CHECKPOINT_B64)
+        _ckpt = torch.load(io.BytesIO(_data), map_location="cpu")
+        _config = _ckpt["config"]
+        _max_planets = _ckpt.get("max_planets", _config.max_planets)
+        _max_fleets = _ckpt.get("max_fleets", 100)
+        _n_amount_bins = _ckpt.get("n_amount_bins", _config.n_amount_bins)
+        _model = PolicyValueModel(_config)
+        _model.load_state_dict(_ckpt["state_dict"])
+        _state_builder = StateBuilder(max_planets=_max_planets, max_fleets=_max_fleets)
+        _codec = ActionCodec(n_amount_bins=_n_amount_bins)
+        _bot = NeuralBot(model=_model, state_builder=_state_builder, codec=_codec, device="cpu")
+    return _bot.act(obs, config)
+"""
+
+
+def package_neural_bot(checkpoint_path: str | None = None) -> None:
+    """Build submission/main.py from the neural bot source files.
+
+    If *checkpoint_path* points to a valid .pt file, its weights are encoded as
+    a base64 string literal embedded in the output.  Otherwise the generated
+    agent() initialises random weights (useful for smoke-testing the packaging).
+    """
+    all_imports: set[str] = set()
+    code_blocks: list[str] = []
+
+    for filename in SOURCE_FILES:
+        filepath = os.path.join(NEURAL_BOT_DIR, filename)
+        with open(filepath) as f:
+            source = f.read()
+        imports, code = _process_source(source, filename)
+        all_imports |= imports
+        code_blocks.append(f"# === {filename} ===\n{code}")
+
+    # from __future__ must be the very first statement in the module.
+    header = (
+        '"""\n'
+        "Kaggle submission entry point — auto-generated by scripts/submission/package_neural.py.\n"
+        "Do not edit manually.\n"
+        '"""\n'
+        "from __future__ import annotations\n"
+    )
+
+    unified_imports = "\n".join(sorted(all_imports))
+    body = "\n\n\n".join(code_blocks)
+
+    # Resolve checkpoint path (relative paths are anchored to repo root).
+    resolved_ckpt: str | None = None
+    if checkpoint_path:
+        resolved_ckpt = (
+            os.path.join(_ROOT, checkpoint_path)
+            if not os.path.isabs(checkpoint_path)
+            else checkpoint_path
+        )
+        if not os.path.exists(resolved_ckpt):
+            print(f"WARNING: checkpoint not found at {resolved_ckpt!r}, falling back to random weights.")
+            resolved_ckpt = None
+
+    if resolved_ckpt:
+        with open(resolved_ckpt, "rb") as f:
+            checkpoint_b64 = base64.b64encode(f.read()).decode("ascii")
+        agent_block = _build_agent_checkpoint(checkpoint_b64)
+        ckpt_msg = f" (checkpoint: {resolved_ckpt})"
+    else:
+        agent_block = _build_agent_random()
+        ckpt_msg = " (random weights)"
+
+    final = (
+        header
+        + "\n"
+        + unified_imports
+        + "\n\n\n"
+        + body
+        + "\n\n\n"
+        + agent_block
+    )
+
+    with open(SUBMISSION_PATH, "w") as f:
+        f.write(final)
+
+    print(f"Packaged:  bots.neural{ckpt_msg}")
+    print(f"Output:    {SUBMISSION_PATH}")
+
+
+def main() -> None:
+    with open(CONFIG_PATH) as f:
+        cfg = json.load(f)
+
+    checkpoint_path: str | None = cfg.get("checkpoint_path")
+    message: str = cfg["message"]
+    competition: str = cfg.get("competition", "orbit-wars")
+    save_log: bool = cfg.get("save_log", True)
+
+    package_neural_bot(checkpoint_path)
+
+    print(f"Submitting to: {competition}")
+    print(f"Message:       {message}\n")
+
+    result = subprocess.run(
+        [
+            "kaggle", "competitions", "submit", competition,
+            "-f", SUBMISSION_PATH,
+            "-m", message,
+        ],
+        capture_output=False,
+    )
+
+    success = result.returncode == 0
+    if save_log:
+        log_path = log_experiment("submissions", {
+            "bot": "bots.neural",
+            "checkpoint": checkpoint_path,
+            "message": message,
+            "competition": competition,
+            "success": success,
+        }, label=message)
+        print(f"Log: {log_path}")
+
+    if not success:
+        print("\nSubmission failed. Make sure KAGGLE_API_TOKEN is set.")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

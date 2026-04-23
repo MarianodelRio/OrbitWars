@@ -8,6 +8,7 @@ import pytest
 from bots.neural.types import ActionContext, ModelInput, ModelLabels
 from bots.neural.state_builder import StateBuilder
 from bots.neural.action_codec import ActionCodec
+from bots.neural.model import PolicyOutput
 from dataset.episode import StepRecord
 
 
@@ -332,4 +333,111 @@ def test_action_codec_decode_empty_context_returns_no_op():
     )
     planets = np.empty((0, 7), dtype=np.float32)
     result = codec.decode(None, ctx, planets)
+    assert result == []
+
+
+def test_action_codec_decode_noop_when_action_type_is_zero():
+    """decode returns [] when action_type_logits strongly favors NO_OP (index 0)."""
+    codec = ActionCodec()
+    ctx = ActionContext(
+        planet_ids=np.array([10, 20], dtype=np.int32),
+        planet_positions=np.array([[10.0, 10.0], [90.0, 90.0]], dtype=np.float32),
+        my_planet_mask=np.array([True, False]),
+        n_planets=2,
+    )
+    planets = np.array(
+        [[10, 0, 10.0, 10.0, 3.0, 100.0, 2.0],
+         [20, 1, 90.0, 90.0, 3.0,  30.0, 3.0]],
+        dtype=np.float32,
+    )
+    output = PolicyOutput(
+        action_type_logits=np.array([100.0, -100.0]),
+        source_logits=np.array([1.0, 0.0]),
+        target_logits=np.array([0.0, 1.0]),
+        amount_logits=np.array([0.0, 0.0, 1.0, 0.0, 0.0]),
+        value=np.array([0.0]),
+    )
+    result = codec.decode(output, ctx, planets)
+    assert result == []
+
+
+def test_action_codec_decode_launch_returns_action():
+    """decode returns a valid LAUNCH action when action_type favors LAUNCH."""
+    codec = ActionCodec()
+    ctx = ActionContext(
+        planet_ids=np.array([10, 20], dtype=np.int32),
+        planet_positions=np.array([[10.0, 10.0], [90.0, 90.0]], dtype=np.float32),
+        my_planet_mask=np.array([True, False]),
+        n_planets=2,
+    )
+    planets = np.array(
+        [[10, 0, 10.0, 10.0, 3.0, 100.0, 2.0],
+         [20, 1, 90.0, 90.0, 3.0,  30.0, 3.0]],
+        dtype=np.float32,
+    )
+    output = PolicyOutput(
+        action_type_logits=np.array([-100.0, 100.0]),
+        source_logits=np.array([100.0, -100.0]),
+        target_logits=np.array([-100.0, 100.0]),
+        amount_logits=np.array([0.0, 0.0, 100.0, 0.0, 0.0]),  # bin 2 → 0.5
+        value=np.array([0.0]),
+    )
+    result = codec.decode(output, ctx, planets)
+    assert len(result) == 1
+    assert result[0][0] == 10                           # source planet_id
+    assert result[0][2] == pytest.approx(0.5 * 100.0)  # 50 ships
+    assert isinstance(result[0][1], float)              # angle is a float
+
+
+def test_action_codec_decode_source_mask_excludes_non_owned():
+    """decode picks the owned planet even when a non-owned planet has higher raw logit."""
+    codec = ActionCodec()
+    ctx = ActionContext(
+        planet_ids=np.array([10, 20, 30], dtype=np.int32),
+        planet_positions=np.array(
+            [[10.0, 10.0], [50.0, 50.0], [90.0, 90.0]], dtype=np.float32
+        ),
+        my_planet_mask=np.array([False, True, False]),
+        n_planets=3,
+    )
+    planets = np.array(
+        [[10, 1, 10.0, 10.0, 3.0,  80.0, 2.0],
+         [20, 0, 50.0, 50.0, 3.0, 120.0, 2.0],
+         [30, 1, 90.0, 90.0, 3.0,  60.0, 2.0]],
+        dtype=np.float32,
+    )
+    output = PolicyOutput(
+        action_type_logits=np.array([-100.0, 100.0]),
+        source_logits=np.array([100.0, 50.0, -100.0]),  # raw argmax is index 0 (not owned)
+        target_logits=np.array([-100.0, -100.0, 100.0]),
+        amount_logits=np.array([0.0, 0.0, 100.0, 0.0, 0.0]),
+        value=np.array([0.0]),
+    )
+    result = codec.decode(output, ctx, planets)
+    assert len(result) == 1
+    assert result[0][0] == 20  # planet_ids[1] — the owned planet was selected
+
+
+def test_action_codec_decode_no_ships_returns_empty():
+    """decode returns [] when the source planet has zero ships."""
+    codec = ActionCodec()
+    ctx = ActionContext(
+        planet_ids=np.array([10, 20], dtype=np.int32),
+        planet_positions=np.array([[10.0, 10.0], [90.0, 90.0]], dtype=np.float32),
+        my_planet_mask=np.array([True, False]),
+        n_planets=2,
+    )
+    planets = np.array(
+        [[10, 0, 10.0, 10.0, 3.0, 0.0, 2.0],   # source planet has 0 ships
+         [20, 1, 90.0, 90.0, 3.0, 30.0, 3.0]],
+        dtype=np.float32,
+    )
+    output = PolicyOutput(
+        action_type_logits=np.array([-100.0, 100.0]),
+        source_logits=np.array([100.0, -100.0]),
+        target_logits=np.array([-100.0, 100.0]),
+        amount_logits=np.array([100.0, 0.0, 0.0, 0.0, 0.0]),  # bin 0 → 0.1
+        value=np.array([0.0]),
+    )
+    result = codec.decode(output, ctx, planets)
     assert result == []

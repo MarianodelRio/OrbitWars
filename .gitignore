@@ -17,5 +17,7 @@ build/
 tournament/results/*
 !tournament/results/.gitkeep
 
-# Data 
+# Data
 data/
+
+runs/

@@ -1,3 +1,5 @@
+# DEPRECATED: Use training/trainers/il_trainer.py (ILTrainer) instead.
+# This file is kept for reference only and will not be updated.
 from training.rewards.shaped import shaped_reward
 
 def self_play_loop(bot_factory, n_episodes=10, steps=200):

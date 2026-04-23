@@ -1,0 +1,41 @@
+{
+  "run_name": "neural_il",
+  "run_id": "",
+  "model_config": {
+    "input_dim": 1050,
+    "hidden_dims": [256, 128],
+    "max_planets": 50,
+    "n_amount_bins": 5,
+    "dropout": 0.1
+  },
+  "lr": 0.001,
+  "batch_size": 64,
+  "epochs": 20,
+  "val_split": 0.2,
+  "eval_every": 5,
+  "eval_opponents": ["heuristic.baseline"],
+  "n_eval_matches": 10,
+  "data_pipeline": {
+    "catalog": {
+      "roots": null,
+      "filter": {
+        "bot": null,
+        "opponent": null,
+        "winner_only": false,
+        "done_reason": null,
+        "min_steps": null,
+        "max_steps": null
+      }
+    },
+    "builder": {
+      "perspective": "winner",
+      "mode": "il_step",
+      "state_transform": "raw",
+      "action_transform": "raw",
+      "reward_transform": null,
+      "step_filter": "non_empty_state"
+    }
+  },
+  "device": "cpu",
+  "seed": 42
+}
