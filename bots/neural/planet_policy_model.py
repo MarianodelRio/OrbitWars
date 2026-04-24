@@ -129,6 +129,19 @@ class PlanetPolicyModel(nn.Module):
         """
         B, P, _ = planet_features.shape
 
+        # Guard: if a batch item has no real planets, attention would produce NaN
+        # (softmax over all-masked positions → -inf → NaN).  This should not
+        # happen after NonEmptyStateFilter is applied, but defend anyway.
+        if not planet_mask.any():
+            device = planet_features.device
+            zero = torch.zeros(B, 1, device=device)
+            return PlanetPolicyOutput(
+                action_type_logits=torch.zeros(B, P, 2, device=device),
+                target_logits=torch.zeros(B, P, P, device=device),
+                amount_logits=torch.zeros(B, P, self.config.n_amount_bins, device=device),
+                value=zero,
+            )
+
         # Stage 1: Encode each planet
         planet_emb = self.planet_encoder(
             planet_features.view(B * P, -1)

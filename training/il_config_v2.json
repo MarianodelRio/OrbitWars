@@ -16,7 +16,7 @@
     "n_attn_heads": 2
   },
   "lr": 0.001,
-  "batch_size": 128,
+  "batch_size": 16,
   "epochs": 30,
   "val_split": 0.15,
   "eval_every": 5,

@@ -83,23 +83,37 @@ class ILTrainer(BaseTrainer):
         use_pointer = isinstance(self.model, PointerNetworkModel)
         use_planet_policy = isinstance(self.model, PlanetPolicyModel)
 
+        # Resolve step_filter from config string
+        step_filter = None
+        step_filter_str = builder_cfg.get("step_filter")
+        if step_filter_str == "non_empty_state":
+            from dataset.transforms.filters import NonEmptyStateFilter
+            step_filter = NonEmptyStateFilter()
+        elif step_filter_str is not None:
+            print(f"[ILTrainer] Warning: unknown step_filter {step_filter_str!r}, ignoring")
+
         train_dataset = build_il_dataset(
             train_catalog, self.state_builder, self.codec,
             perspective=perspective,
             use_pointer=use_pointer,
             use_planet_policy=use_planet_policy,
+            step_filter=step_filter,
         )
         val_dataset = build_il_dataset(
             val_catalog, self.state_builder, self.codec,
             perspective=perspective,
             use_pointer=use_pointer,
             use_planet_policy=use_planet_policy,
+            step_filter=step_filter,
         )
 
+        # shuffle=False: index is episode-ordered so the LRU reader cache in
+        # NeuralILDataset achieves near-100% hit rate.  Episode-level shuffling
+        # already happens above (rng.shuffle(all_episodes)).
         train_loader = DataLoader(
             train_dataset,
             batch_size=self.config.batch_size,
-            shuffle=True,
+            shuffle=False,
         )
         val_loader = DataLoader(
             val_dataset,
@@ -265,6 +279,7 @@ class ILTrainer(BaseTrainer):
                     )
 
                 loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
                 optimizer.step()
 
                 train_loss_total += loss.item()

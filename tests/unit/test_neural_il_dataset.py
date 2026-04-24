@@ -221,6 +221,7 @@ def _make_planet_policy_sample(
         planet_features_v2=planet_features_v2,
         fleet_features_v2=fleet_features_v2,
         fleet_mask=fleet_mask,
+        planet_mask_v2=np.array([i < n_total for i in range(MAX_PLANETS)], dtype=bool),
         global_features=global_features,
         labels_v2=labels_v2,
     )
@@ -277,9 +278,11 @@ def test_planet_policy_planet_mask_shape_and_dtype():
 
 def test_planet_policy_planet_mask_count():
     n_my = 5
-    dataset = NeuralILDataset([_make_planet_policy_sample(n_my_planets=n_my)], use_planet_policy=True)
+    n_total = 10
+    dataset = NeuralILDataset([_make_planet_policy_sample(n_my_planets=n_my, n_total=n_total)], use_planet_policy=True)
     item = dataset[0]
-    assert item["planet_mask"].sum().item() == n_my
+    # planet_mask covers ALL real planets (mine + enemy/neutral), not just owned ones
+    assert item["planet_mask"].sum().item() == n_total
 
 
 def test_planet_policy_action_types_shape_and_dtype():
