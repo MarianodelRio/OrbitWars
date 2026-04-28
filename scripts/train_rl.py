@@ -13,6 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import torch
 from training.utils.rl_config import RLConfig
+from training.utils.device import resolve_device
 from bots.neural.planet_policy_model import PlanetPolicyConfig, PlanetPolicyModel
 from bots.neural.state_builder import StateBuilder
 from bots.neural.action_codec import ActionCodec
@@ -22,9 +23,12 @@ from training.trainers.rl_trainer import RLTrainer
 def main():
     parser = argparse.ArgumentParser(description="Train Orbit Wars bot with PPO")
     parser.add_argument("--config", required=True, help="Path to RLConfig JSON")
+    parser.add_argument("--device", default=None, help="Override device: cpu, cuda, or auto")
     args = parser.parse_args()
 
     config = RLConfig.from_json(Path(args.config))
+    if args.device is not None:
+        config.device = resolve_device(args.device)
 
     model_config_dict = config.model_config
     planet_cfg = PlanetPolicyConfig(

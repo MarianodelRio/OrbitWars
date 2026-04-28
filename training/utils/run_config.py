@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from training.utils.device import resolve_device
+
 
 @dataclass
 class RunConfig:
@@ -45,6 +47,7 @@ class RunConfig:
             )
             data["run_id"] = cls._next_run_id(run_dir_parent)
 
+        data["device"] = resolve_device(data["device"])
         return cls(**data)
 
     @property

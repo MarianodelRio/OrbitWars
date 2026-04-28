@@ -45,7 +45,7 @@
       "cache_path": "data/cache/il_planet_policy_v2.h5"
     }
   },
-  "device": "cpu",
+  "device": "auto",
   "seed": 42,
   "weight_decay": 1e-4,
   "action_type_loss_weight": 2.0,

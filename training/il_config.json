@@ -1,19 +1,24 @@
 {
-  "run_name": "pointer_il",
+  "run_name": "planet_policy_il",
   "run_id": "",
   "model_config": {
-    "model_type": "pointer",
-    "planet_embed_dim": 64,
-    "global_dim": 128,
+    "model_type": "planet_policy",
+    "Dp": 10,
+    "Df": 8,
+    "Dg": 4,
+    "E": 64,
+    "F": 32,
+    "G": 128,
     "max_planets": 50,
-    "max_fleets": 100,
+    "max_fleets": 200,
     "n_amount_bins": 5,
-    "dropout": 0.1
+    "dropout": 0.1,
+    "n_attn_heads": 2
   },
-  "lr": 3e-4,
+  "lr": 0.001,
   "batch_size": 64,
-  "epochs": 20,
-  "val_split": 0.2,
+  "epochs": 30,
+  "val_split": 0.15,
   "eval_every": 5,
   "eval_opponents": ["heuristic.baseline"],
   "n_eval_matches": 10,
@@ -21,7 +26,7 @@
     "catalog": {
       "roots": null,
       "filter": {
-        "bot": "heuristic.sniper",
+        "bot": null,
         "opponent": null,
         "winner_only": false,
         "done_reason": null,
@@ -31,19 +36,21 @@
       }
     },
     "builder": {
-      "perspective": "both",
+      "perspective": "winner",
       "mode": "il_step",
       "state_transform": "raw",
       "action_transform": "raw",
       "reward_transform": null,
-      "step_filter": "non_empty_state"
+      "step_filter": "non_empty_state",
+      "cache_path": "data/cache/il_planet_policy_v2.h5"
     }
   },
-  "device": "cpu",
+  "device": "auto",
   "seed": 42,
-  "weight_decay": 1e-4,
-  "action_type_loss_weight": 1.0,
-  "value_loss_weight": 0.5,
+  "weight_decay": 0.0001,
+  "action_type_loss_weight": 2.0,
+  "value_loss_weight": 0.1,
   "use_class_weights": true,
-  "resume_from": null
+  "resume_from": null,
+  "angular_diff_threshold": 0.7853981633974483
 }

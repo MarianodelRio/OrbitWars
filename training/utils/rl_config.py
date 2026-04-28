@@ -7,6 +7,8 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from training.utils.device import resolve_device
+
 
 @dataclass
 class RLConfig:
@@ -76,6 +78,8 @@ class RLConfig:
         # Only pass known fields
         known = {f.name for f in dataclasses.fields(cls)}
         filtered = {k: v for k, v in data.items() if k in known}
+        if "device" in filtered:
+            filtered["device"] = resolve_device(filtered["device"])
         return cls(**filtered)
 
     def save(self, directory: Path) -> None:
