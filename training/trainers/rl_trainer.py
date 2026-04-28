@@ -35,6 +35,7 @@ class RLTrainer:
         self._ckpt_manager: CheckpointManager | None = None
         self._rl_metrics_logger: RLMetricsLogger | None = None
         self._optimizer = None
+        self._lr_scheduler = None
         self._env: OrbitWarsEnv | None = None
         self._pool: OpponentPool | None = None
         self._sampler: PolicySampler | None = None
@@ -53,6 +54,16 @@ class RLTrainer:
         self._rl_metrics_logger = RLMetricsLogger(run_dir)
 
         self._optimizer = torch.optim.Adam(self.model.parameters(), lr=cfg.lr)
+
+        if cfg.lr_schedule == "cosine":
+            from torch.optim.lr_scheduler import CosineAnnealingLR
+            self._lr_scheduler = CosineAnnealingLR(
+                self._optimizer,
+                T_max=cfg.total_iterations,
+                eta_min=cfg.lr * 0.01,
+            )
+        else:
+            self._lr_scheduler = None
 
         self._reward_fn = PotentialReward(
             w_planets=cfg.w_planets,
@@ -88,7 +99,10 @@ class RLTrainer:
         env = self._env
         sampler = self._sampler
 
-        opponent_fn = self._pool.sample()
+        opponent_fn = self._pool.sample(
+            self_play_prob=self.config.self_play_prob,
+            current_model_fn=self._current_model_as_agent(),
+        )
         env.set_opponent(opponent_fn)
         state, info = env.reset()
 
@@ -121,7 +135,10 @@ class RLTrainer:
 
             if step_info.get("error") and step_info.get("error_reason") == "env_error":
                 # Reset and continue
-                opponent_fn = self._pool.sample()
+                opponent_fn = self._pool.sample(
+                    self_play_prob=self.config.self_play_prob,
+                    current_model_fn=self._current_model_as_agent(),
+                )
                 env.set_opponent(opponent_fn)
                 state, _ = env.reset()
                 continue
@@ -142,7 +159,10 @@ class RLTrainer:
             buffer.add(roll_step)
 
             if done:
-                opponent_fn = self._pool.sample()
+                opponent_fn = self._pool.sample(
+                    self_play_prob=self.config.self_play_prob,
+                    current_model_fn=self._current_model_as_agent(),
+                )
                 env.set_opponent(opponent_fn)
                 state, _ = env.reset()
             else:
@@ -199,12 +219,45 @@ class RLTrainer:
         )
         return avg
 
+    def _current_model_as_agent(self):
+        """Return a callable that wraps the current model as agent, restoring train mode."""
+        from bots.neural.bot import NeuralBot
+        from bots.interface import make_agent
+        was_training = self.model.training
+        bot = NeuralBot(
+            model=self.model,
+            state_builder=self.state_builder,
+            codec=self.codec,
+            device=self.config.device,
+        )
+        if was_training:
+            self.model.train()
+        return make_agent(bot)
+
     def train(self) -> None:
         self._setup()
         cfg = self.config
         self.model.to(cfg.device)
 
-        for iteration in range(1, cfg.total_iterations + 1):
+        # Auto-resume from last RL checkpoint if available
+        start_iter = 1
+        rl_last_path = cfg.run_dir / "checkpoints" / "rl_last.pt"
+        if rl_last_path.exists():
+            try:
+                ckpt = self._ckpt_manager.load_rl_checkpoint(tag="rl_last", device=cfg.device)
+                self.model.load_state_dict(ckpt["state_dict"])
+                self._optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+                if self._lr_scheduler is not None and ckpt.get("lr_scheduler_state_dict") is not None:
+                    self._lr_scheduler.load_state_dict(ckpt["lr_scheduler_state_dict"])
+                start_iter = ckpt.get("iteration", 0) + 1
+                print(f"[RLTrainer] Resumed from rl_last.pt  (next iteration={start_iter})")
+            except Exception as e:
+                print(f"[RLTrainer] Warning: failed to resume from rl_last.pt: {e}")
+
+        self.model.train()
+
+        for iteration in range(start_iter, cfg.total_iterations + 1):
+            self.model.train()
             self._collect_rollout()
 
             avg_ppo_result = self._ppo_update()
@@ -213,11 +266,30 @@ class RLTrainer:
             self._rl_metrics_logger.log_train(iteration, avg_ppo_result, buffer_stats)
             self._buffer.clear()
 
+            if self._lr_scheduler is not None:
+                self._lr_scheduler.step()
+
             if iteration % cfg.snapshot_every == 0:
                 path = self._ckpt_manager.save_snapshot(
                     self.model, self.state_builder, self.codec, iteration
                 )
                 self._pool.add_snapshot(path, iteration)
+
+            if iteration % cfg.save_every == 0:
+                metrics = {
+                    "policy_loss": avg_ppo_result.policy_loss,
+                    "value_loss": avg_ppo_result.value_loss,
+                    "entropy": avg_ppo_result.entropy,
+                }
+                self._ckpt_manager.save_rl_checkpoint(
+                    self.model,
+                    self._optimizer,
+                    self._lr_scheduler,
+                    self.state_builder,
+                    self.codec,
+                    iteration,
+                    metrics,
+                )
 
             if iteration % cfg.eval_every == 0:
                 try:

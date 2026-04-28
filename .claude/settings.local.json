@@ -5,7 +5,8 @@
       "Bash(python -c ' *)",
       "Bash(git -C \"c:/Users/mariano.del.rio/OrbitWars\" diff HEAD -- Makefile requirements.txt setup.sh SETUP_GPU.md)",
       "Bash(xxd /c/Users/mariano.del.rio/OrbitWars/Makefile)",
-      "Bash(bash -n /c/Users/mariano.del.rio/OrbitWars/setup.sh)"
+      "Bash(bash -n /c/Users/mariano.del.rio/OrbitWars/setup.sh)",
+      "WebSearch"
     ]
   }
 }

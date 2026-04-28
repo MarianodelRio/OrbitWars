@@ -179,6 +179,17 @@ class ILTrainer(BaseTrainer):
         print()
         optimizer = torch.optim.Adam(self.model.parameters(), lr=self.config.lr, weight_decay=weight_decay)
 
+        # LR scheduler
+        _lr_schedule = getattr(self.config, "lr_schedule", "constant")
+        if _lr_schedule == "cosine":
+            from torch.optim.lr_scheduler import CosineAnnealingLR
+            _lr_scheduler = CosineAnnealingLR(optimizer, T_max=self.config.epochs, eta_min=self.config.lr * 0.01)
+        elif _lr_schedule == "step":
+            from torch.optim.lr_scheduler import ReduceLROnPlateau
+            _lr_scheduler = ReduceLROnPlateau(optimizer, mode="min", patience=3, factor=0.5)
+        else:
+            _lr_scheduler = None
+
         # 5. Loss functions — optionally weighted by inverse class frequency
         mse_loss = nn.MSELoss()
         if use_class_weights:
@@ -230,6 +241,7 @@ class ILTrainer(BaseTrainer):
 
         best_val_loss = float("inf")
         start_epoch = 1
+        epochs_no_improve = 0
 
         # Resume from checkpoint if configured
         resume_from = getattr(self.config, "resume_from", None)
@@ -335,6 +347,13 @@ class ILTrainer(BaseTrainer):
 
             val_loss = val_loss_total / max(val_steps, 1)
 
+            # Step LR scheduler
+            if _lr_scheduler is not None:
+                if isinstance(_lr_scheduler, __import__("torch").optim.lr_scheduler.ReduceLROnPlateau):
+                    _lr_scheduler.step(val_loss)
+                else:
+                    _lr_scheduler.step()
+
             # c. Log
             self._log_train({"epoch": epoch, "loss": train_loss})
             self._log_val({"epoch": epoch, "loss": val_loss})
@@ -345,6 +364,20 @@ class ILTrainer(BaseTrainer):
             is_best = val_loss < best_val_loss
             if is_best:
                 best_val_loss = val_loss
+                epochs_no_improve = 0
+            else:
+                epochs_no_improve += 1
+
+            # Early stopping
+            _patience = getattr(self.config, "early_stopping_patience", 0)
+            if _patience > 0 and epochs_no_improve >= _patience:
+                print(f"[ILTrainer] Early stopping at epoch {epoch} (no improvement for {_patience} epochs)")
+                self._save_checkpoint(
+                    epoch,
+                    {"train_loss": train_loss, "val_loss": val_loss},
+                    is_best,
+                )
+                break
 
             # f. Save checkpoint
             self._save_checkpoint(

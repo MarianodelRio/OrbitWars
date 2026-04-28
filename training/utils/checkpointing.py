@@ -98,3 +98,47 @@ class CheckpointManager:
             return []
         paths = list(snapshots_dir.glob("snap_*.pt"))
         return sorted(paths)
+
+    def save_rl_checkpoint(
+        self,
+        model,
+        optimizer,
+        lr_scheduler,
+        state_builder,
+        codec,
+        iteration: int,
+        metrics: dict,
+        is_best_winrate: bool = False,
+    ) -> Path:
+        model_type = "planet_policy"
+        config_to_save = dataclasses.asdict(model.config)
+
+        checkpoint = {
+            "model_type": model_type,
+            "config": config_to_save,
+            "state_dict": model.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "lr_scheduler_state_dict": lr_scheduler.state_dict() if lr_scheduler is not None else None,
+            "max_planets": state_builder.max_planets,
+            "max_fleets": state_builder.max_fleets,
+            "n_amount_bins": codec.n_amount_bins,
+            "iteration": iteration,
+            "metrics": metrics,
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+
+        iter_path = self._ckpt_dir / f"rl_iter_{iteration:06d}.pt"
+        torch.save(checkpoint, iter_path)
+
+        last_path = self._ckpt_dir / "rl_last.pt"
+        torch.save(checkpoint, last_path)
+
+        if is_best_winrate:
+            best_path = self._ckpt_dir / "rl_best_winrate.pt"
+            torch.save(checkpoint, best_path)
+
+        return iter_path
+
+    def load_rl_checkpoint(self, tag: str = "rl_last", device: str = "cpu") -> dict:
+        path = self._ckpt_dir / f"{tag}.pt"
+        return torch.load(str(path), map_location=device, weights_only=False)

@@ -64,7 +64,9 @@ class OpponentPool:
             # Remove from _entries by identity
             self._entries = [e for e in self._entries if e is not oldest]
 
-    def sample(self, rng: random.Random | None = None):
+    def sample(self, rng: random.Random | None = None, self_play_prob: float = 0.0, current_model_fn=None):
+        if current_model_fn is not None and random.random() < self_play_prob:
+            return current_model_fn
         if not self._entries:
             return lambda obs, config=None: []
         if rng is not None:

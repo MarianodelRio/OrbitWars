@@ -1,0 +1,58 @@
+{
+  "run_name": "rl_ppo_v1",
+  "run_id": "",
+  "device": "auto",
+  "seed": 42,
+  "total_iterations": 1000,
+
+  "model_config": {
+    "Dp": 10,
+    "Df": 8,
+    "Dg": 4,
+    "E": 64,
+    "F": 32,
+    "G": 128,
+    "max_planets": 50,
+    "max_fleets": 200,
+    "n_amount_bins": 5,
+    "dropout": 0.1,
+    "n_attn_heads": 2
+  },
+
+  "n_rollout_steps": 2048,
+  "steps_per_episode": 500,
+  "ppo_epochs": 4,
+  "ppo_batch_size": 256,
+  "clip_eps": 0.2,
+  "vf_coef": 0.5,
+  "ent_coef": 0.01,
+  "max_grad_norm": 0.5,
+  "lr": 0.0003,
+  "lr_schedule": "cosine",
+  "normalize_advantages": true,
+
+  "gamma": 0.99,
+  "gae_lambda": 0.95,
+
+  "w_planets": 1.0,
+  "w_production": 0.5,
+  "w_ships": 0.1,
+  "reward_lambda": 0.05,
+  "reward_clip_abs": 0.2,
+
+  "heuristic_opponents": [
+    "bots.heuristic.baseline:agent_fn",
+    "bots.heuristic.sniper:agent_fn",
+    "bots.scoring.bot:agent_fn"
+  ],
+  "frozen_checkpoint": null,
+  "max_snapshots": 5,
+  "snapshot_every": 50,
+  "self_play_prob": 0.2,
+
+  "eval_every": 100,
+  "n_eval_matches": 20,
+  "eval_opponents": ["heuristic.baseline", "heuristic.sniper", "scoring.bot"],
+
+  "save_every": 100
+}

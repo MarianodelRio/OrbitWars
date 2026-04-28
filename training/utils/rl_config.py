@@ -54,6 +54,12 @@ class RLConfig:
     n_eval_matches: int = 10
     eval_opponents: list = field(default_factory=lambda: ["heuristic.baseline"])
 
+    # Checkpointing
+    save_every: int = 100
+
+    # LR schedule
+    lr_schedule: str = "cosine"
+
     # Run metadata
     run_name: str = "rl_run"
     run_id: str = ""
@@ -91,4 +97,4 @@ class RLConfig:
 
     @property
     def run_dir(self) -> Path:
-        return Path("runs") / self.run_name / self.run_id
+        return Path(__file__).resolve().parent.parent.parent / "runs" / self.run_name / self.run_id

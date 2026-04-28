@@ -8,12 +8,8 @@ from pathlib import Path
 
 from bots.neural.bot import NeuralBot
 from bots.interface import make_agent
-from game.env.evaluator import evaluate, load_agent
-
-
-OPPONENT_REGISTRY = {
-    "heuristic.baseline": "bots.heuristic.baseline:agent_fn",
-}
+from game.env.evaluator import evaluate
+from bots.registry import resolve
 
 
 class Evaluator:
@@ -34,12 +30,10 @@ class Evaluator:
         results = {}
 
         for opp_name in self._opponents:
-            registry_str = OPPONENT_REGISTRY.get(opp_name)
-            if registry_str is None:
+            opponent_fn = resolve(opp_name)
+            if opponent_fn is None:
                 print(f"[Evaluator] Warning: opponent '{opp_name}' not in registry, skipping.")
                 continue
-
-            opponent_fn = load_agent(registry_str)
 
             raw = evaluate(neural_fn, opponent_fn, n_matches=self._n_matches)
 
