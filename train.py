@@ -73,17 +73,17 @@ def _run_training(args) -> None:
 
         model_config_dict = config.model_config
         planet_cfg = PlanetPolicyConfig(
-            Dp=model_config_dict.get("Dp", 10),
-            Df=model_config_dict.get("Df", 8),
-            Dg=model_config_dict.get("Dg", 4),
-            E=model_config_dict.get("E", 64),
-            F=model_config_dict.get("F", 32),
-            G=model_config_dict.get("G", 128),
+            Dp=model_config_dict.get("Dp", 24),
+            Df=model_config_dict.get("Df", 16),
+            Dg=model_config_dict.get("Dg", 16),
+            E=model_config_dict.get("E", 192),
+            F=model_config_dict.get("F", 128),
+            G=model_config_dict.get("G", 384),
             max_planets=model_config_dict.get("max_planets", 50),
             max_fleets=model_config_dict.get("max_fleets", 200),
-            n_amount_bins=model_config_dict.get("n_amount_bins", 5),
+            n_amount_bins=model_config_dict.get("n_amount_bins", 8),
             dropout=model_config_dict.get("dropout", 0.1),
-            n_attn_heads=model_config_dict.get("n_attn_heads", 2),
+            n_heads=model_config_dict.get("n_heads", 8),
         )
         model = PlanetPolicyModel(planet_cfg)
 
@@ -137,17 +137,17 @@ def _run_training(args) -> None:
 
         model_config_dict = config.model_config
         planet_cfg = PlanetPolicyConfig(
-            Dp=model_config_dict.get("Dp", 10),
-            Df=model_config_dict.get("Df", 8),
-            Dg=model_config_dict.get("Dg", 4),
-            E=model_config_dict.get("E", 64),
-            F=model_config_dict.get("F", 32),
-            G=model_config_dict.get("G", 128),
+            Dp=model_config_dict.get("Dp", 24),
+            Df=model_config_dict.get("Df", 16),
+            Dg=model_config_dict.get("Dg", 16),
+            E=model_config_dict.get("E", 192),
+            F=model_config_dict.get("F", 128),
+            G=model_config_dict.get("G", 384),
             max_planets=model_config_dict.get("max_planets", 50),
             max_fleets=model_config_dict.get("max_fleets", 200),
-            n_amount_bins=model_config_dict.get("n_amount_bins", 5),
+            n_amount_bins=model_config_dict.get("n_amount_bins", 8),
             dropout=model_config_dict.get("dropout", 0.1),
-            n_attn_heads=model_config_dict.get("n_attn_heads", 2),
+            n_heads=model_config_dict.get("n_heads", 8),
         )
         model = PlanetPolicyModel(planet_cfg)
         state_builder = StateBuilder(max_planets=planet_cfg.max_planets, max_fleets=planet_cfg.max_fleets)

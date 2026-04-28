@@ -34,6 +34,18 @@ class RunConfig:
     angular_diff_threshold: float = 0.7853981633974483  # π/4
     lr_schedule: str = "constant"
     early_stopping_patience: int = 0
+    optimizer: str = "adam"
+    lr_min: float = 1e-5
+    warmup_epochs: int = 0
+    num_workers: int = 0
+    pin_memory: bool = False
+    persistent_workers: bool = False
+    use_amp: bool = False
+    amp_dtype: str = "bfloat16"
+    augment_reflection: bool = False
+    score_diff_loss_weight: float = 0.3
+    aux_ownership_weight: float = 0.1
+    aux_opponent_launch_weight: float = 0.1
 
     @classmethod
     def from_json(cls, path: Path) -> "RunConfig":

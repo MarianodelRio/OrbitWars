@@ -6,17 +6,17 @@
   "total_iterations": 1000,
 
   "model_config": {
-    "Dp": 10,
-    "Df": 8,
-    "Dg": 4,
-    "E": 64,
-    "F": 32,
-    "G": 128,
+    "Dp": 24,
+    "Df": 16,
+    "Dg": 16,
+    "E": 192,
+    "F": 128,
+    "G": 384,
     "max_planets": 50,
     "max_fleets": 200,
-    "n_amount_bins": 5,
-    "dropout": 0.1,
-    "n_attn_heads": 2
+    "n_amount_bins": 8,
+    "n_heads": 8,
+    "dropout": 0.1
   },
 
   "n_rollout_steps": 2048,

@@ -24,6 +24,18 @@ class StateBuilder:
         self.max_planets = max_planets
         self.max_fleets = max_fleets
 
+    @property
+    def planet_feature_dim(self) -> int:
+        return 24
+
+    @property
+    def fleet_feature_dim(self) -> int:
+        return 16
+
+    @property
+    def global_feature_dim(self) -> int:
+        return 16
+
     def from_obs(self, obs: dict, player: int) -> StructuredState:
         raw_planets = obs.get("planets", [])
         raw_fleets = obs.get("fleets", [])
@@ -50,9 +62,12 @@ class StateBuilder:
             initial_planets=initial_planets_raw,
         )
 
-    def from_step(self, step: StepRecord, player: int) -> StructuredState:
-        # angular_velocity and initial_planets not available from HDF5; orbital features will be 0.0
-        return self._build(step.planets, step.fleets, step.comet_planet_ids, step.turn, player)
+    def from_step(self, step: StepRecord, player: int, angular_velocity: float = 0.0, initial_planets=None) -> StructuredState:
+        return self._build(
+            step.planets, step.fleets, step.comet_planet_ids, step.turn, player,
+            angular_velocity=angular_velocity,
+            initial_planets=initial_planets,
+        )
 
     def from_obs_structured(self, obs: dict, player: int) -> StructuredState:
         return self.from_obs(obs, player)

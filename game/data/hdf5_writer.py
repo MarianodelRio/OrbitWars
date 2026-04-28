@@ -107,3 +107,5 @@ def write_match_hdf5(steps_data, result, data_path, bot0_name="", bot1_name="", 
         f.attrs["final_ships_p1"] = final_ships_p1
         f.attrs["bot0"] = bot0_name
         f.attrs["bot1"] = bot1_name
+        f.attrs["angular_velocity"] = float(steps_data[0][0]["observation"].get("angular_velocity", 0.0))
+        f.attrs["initial_planets_json"] = json.dumps(steps_data[0][0]["observation"].get("initial_planets", []))

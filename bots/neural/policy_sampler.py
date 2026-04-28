@@ -10,7 +10,6 @@ from torch.distributions import Categorical
 
 from .planet_policy_model import PlanetPolicyOutput
 from .types import ActionContext
-from .action_codec import MIN_CAPTURE_BIN
 
 NO_OP = 0
 LAUNCH = 1
@@ -146,11 +145,7 @@ class PolicySampler:
 
             source_ships_arr = planet_features[:, 5] * 200.0  # (P,)
             fractions = bins_arr[safe_amt_clipped]             # (P,)
-            n_ships_arr = np.where(
-                amount_bins == MIN_CAPTURE_BIN,
-                source_ships_arr,
-                fractions * source_ships_arr,
-            )
+            n_ships_arr = fractions * source_ships_arr
 
             # Combined validity mask
             build_mask = (
@@ -158,7 +153,7 @@ class PolicySampler:
                 & (target_idxs >= 0)
                 & (target_idxs < context.n_planets)
                 & (amount_bins >= 0)
-                & (amount_bins <= MIN_CAPTURE_BIN)
+                & (amount_bins <= 7)
                 & (n_ships_arr >= 1.0)
             )
             build_idxs = np.where(build_mask)[0]

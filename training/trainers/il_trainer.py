@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -28,6 +29,46 @@ def _safe_ce(
     return F.cross_entropy(logits[mask], labels[mask])
 
 from pathlib import Path
+
+
+def _safe_bce(logits: torch.Tensor, labels: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    valid = mask.bool()
+    if not valid.any():
+        return torch.tensor(0.0, device=logits.device)
+    return F.binary_cross_entropy_with_logits(logits[valid], labels[valid])
+
+
+def _reflect_batch(batch: dict) -> dict:
+    batch = {k: v.clone() if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
+    mode = torch.randint(4, (1,)).item()
+    if mode == 0:
+        return batch
+    pf = batch["planet_features"]   # (B, P, Dp)
+    ff = batch.get("fleet_features")  # (B, FL, Df) or None
+    if mode == 1 or mode == 3:      # x-axis flip: y → 1-y
+        pf[:, :, 4] = 1.0 - pf[:, :, 4]   # y_norm
+        pf[:, :, 11] = -pf[:, :, 11]       # sin(theta) negated
+        if ff is not None:
+            ff[:, :, 3] = 1.0 - ff[:, :, 3]  # fleet y_norm
+            ff[:, :, 4] = -ff[:, :, 4]        # fleet sin(angle)
+    if mode == 2 or mode == 3:      # y-axis flip: x → 1-x
+        pf[:, :, 3] = 1.0 - pf[:, :, 3]   # x_norm
+        pf[:, :, 12] = -pf[:, :, 12]       # cos(theta) negated
+        if ff is not None:
+            ff[:, :, 2] = 1.0 - ff[:, :, 2]  # fleet x_norm
+            ff[:, :, 5] = -ff[:, :, 5]        # fleet cos(angle)
+    batch["planet_features"] = pf
+    if ff is not None:
+        batch["fleet_features"] = ff
+    return batch
+
+
+def _make_reflect_collate():
+    _default = torch.utils.data.default_collate
+    def _collate(batch):
+        return _reflect_batch(_default(batch))
+    return _collate
+
 
 from dataset.catalog import DataCatalog
 from bots.neural.training import (
@@ -142,16 +183,25 @@ class ILTrainer(BaseTrainer):
         # already happens above (rng.shuffle(all_episodes)).
         # For PrecomputedILDataset we also keep shuffle=False: samples are
         # ordered by episode, so HDF5 reads are sequential (cache-friendly).
+        _num_workers = self.config.num_workers
+        _pin_memory = self.config.pin_memory
+        _persistent_workers = self.config.persistent_workers and _num_workers > 0
         train_loader = DataLoader(
             train_dataset,
             batch_size=self.config.batch_size,
             shuffle=False,
-            num_workers=0,
+            num_workers=_num_workers,
+            pin_memory=_pin_memory,
+            persistent_workers=_persistent_workers,
+            collate_fn=_make_reflect_collate() if getattr(self.config, "augment_reflection", False) else None,
         )
         val_loader = DataLoader(
             val_dataset,
             batch_size=self.config.batch_size,
             shuffle=False,
+            num_workers=_num_workers,
+            pin_memory=_pin_memory,
+            persistent_workers=_persistent_workers,
         )
 
         # Summary
@@ -168,16 +218,42 @@ class ILTrainer(BaseTrainer):
         weight_decay = self.config.weight_decay
         action_type_loss_weight = self.config.action_type_loss_weight
         value_loss_weight = self.config.value_loss_weight
+        score_diff_loss_weight     = getattr(self.config, "score_diff_loss_weight", 0.3)
+        aux_ownership_weight       = getattr(self.config, "aux_ownership_weight", 0.1)
+        aux_opponent_launch_weight = getattr(self.config, "aux_opponent_launch_weight", 0.1)
         use_class_weights = self.config.use_class_weights
         print("\n=== Model ===")
         print(f"  Type         : PlanetPolicy")
-        print(f"  Architecture : planet_encoder({cfg.Dp}→{cfg.E}) fleet_encoder({cfg.Df}→{cfg.F}) global({cfg.G}) n_attn_heads={cfg.n_attn_heads}")
+        print(f"  Architecture : planet_encoder({cfg.Dp}→{cfg.E}) fleet_encoder({cfg.Df}→{cfg.F}) global({cfg.G}) n_heads={cfg.n_heads}")
         print(f"  Parameters   : {total_params:,}")
         print(f"  Dropout      : {cfg.dropout}  |  lr={self.config.lr}  |  wd={weight_decay}  |  epochs={self.config.epochs}")
         print(f"  Perspective  : {perspective}  |  device={self.config.device}")
         print(f"  Loss weights : action_type={action_type_loss_weight}  value={value_loss_weight}  class_weights={use_class_weights}")
         print()
-        optimizer = torch.optim.Adam(self.model.parameters(), lr=self.config.lr, weight_decay=weight_decay)
+        # Startup validation
+        assert self.model.config.Dp == self.state_builder.planet_feature_dim, (
+            f"Model Dp={self.model.config.Dp} != StateBuilder.planet_feature_dim={self.state_builder.planet_feature_dim}"
+        )
+        assert self.model.config.n_amount_bins == self.codec.n_amount_bins, (
+            f"Model n_amount_bins={self.model.config.n_amount_bins} != Codec n_amount_bins={self.codec.n_amount_bins}"
+        )
+        if use_cache and cache_path is not None:
+            import h5py as _h5py_val
+            with _h5py_val.File(cache_path, "r") as _f_val:
+                _sv = int(_f_val.attrs.get("schema_version", 0))
+                if _sv != 3:
+                    raise RuntimeError(
+                        f"Cache schema version mismatch: expected 3, got {_sv}. "
+                        f"Delete {cache_path} and rebuild."
+                    )
+
+        _opt_name = getattr(self.config, "optimizer", "adam").lower()
+        _opt_cls = torch.optim.AdamW if _opt_name == "adamw" else torch.optim.Adam
+        optimizer = _opt_cls(
+            self.model.parameters(),
+            lr=self.config.lr,
+            weight_decay=getattr(self.config, "weight_decay", 0.0),
+        )
 
         # LR scheduler
         _lr_schedule = getattr(self.config, "lr_schedule", "constant")
@@ -187,6 +263,16 @@ class ILTrainer(BaseTrainer):
         elif _lr_schedule == "step":
             from torch.optim.lr_scheduler import ReduceLROnPlateau
             _lr_scheduler = ReduceLROnPlateau(optimizer, mode="min", patience=3, factor=0.5)
+        elif _lr_schedule == "cosine_with_warmup":
+            _warmup = getattr(self.config, "warmup_epochs", 1)
+            _lr_min = getattr(self.config, "lr_min", 1e-5)
+            _T = self.config.epochs
+            def _cosine_warmup_lambda(ep):
+                if ep < _warmup:
+                    return (ep + 1) / max(_warmup, 1)
+                _progress = (ep - _warmup) / max(_T - _warmup - 1, 1)
+                return _lr_min / self.config.lr + 0.5 * (1.0 - _lr_min / self.config.lr) * (1.0 + math.cos(math.pi * _progress))
+            _lr_scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=_cosine_warmup_lambda)
         else:
             _lr_scheduler = None
 
@@ -213,9 +299,9 @@ class ILTrainer(BaseTrainer):
                     for v in train_dataset[i]["amount_bins"]
                     if v.item() != -1
                 ]
-                at_counts = _np.bincount(at_labels, minlength=2).astype(_np.float32)
+                at_counts = _np.bincount(at_labels, minlength=3).astype(_np.float32)
                 amt_valid = [a for a in amt_labels_raw if a >= 0]
-                amt_counts = _np.bincount(amt_valid, minlength=5).astype(_np.float32)
+                amt_counts = _np.bincount(amt_valid, minlength=8).astype(_np.float32)
 
             at_counts = _np.clip(at_counts, 1, None)
             at_weights = 1.0 / at_counts
@@ -239,9 +325,17 @@ class ILTrainer(BaseTrainer):
         self.model.to(device)
         self.model.train()
 
+        _use_amp = getattr(self.config, "use_amp", False) and device.type == "cuda"
+        _amp_dtype_str = getattr(self.config, "amp_dtype", "bfloat16")
+        _amp_dtype = torch.bfloat16 if _amp_dtype_str == "bfloat16" else torch.float16
+        _scaler = torch.cuda.amp.GradScaler(enabled=(_use_amp and _amp_dtype == torch.float16))
+        print(f"  optimizer={getattr(self.config, 'optimizer', 'adam')}  amp={_use_amp}  lr_schedule={self.config.lr_schedule}  augment_reflection={getattr(self.config, 'augment_reflection', False)}")
+
         best_val_loss = float("inf")
         start_epoch = 1
         epochs_no_improve = 0
+        _best_win_rate = -1.0
+        _win_rate_no_improve = 0
 
         # Resume from checkpoint if configured
         resume_from = getattr(self.config, "resume_from", None)
@@ -280,32 +374,51 @@ class ILTrainer(BaseTrainer):
 
             for batch in train_loader:
                 optimizer.zero_grad()
-                output = self.model(
-                    batch["planet_features"].to(device),
-                    batch["fleet_features"].to(device),
-                    batch["fleet_mask"].to(device),
-                    batch["global_features"].to(device),
-                    batch["planet_mask"].to(device),
-                )
-                B, N = batch["action_types"].shape
-                assert N == self.model.config.max_planets, f"Batch planet dim {N} != model max_planets {self.model.config.max_planets}"
-                at_flat = batch["action_types"].to(device).view(B * N)
-                tgt_flat = batch["target_idxs"].to(device).view(B * N)
-                amt_flat = batch["amount_bins"].to(device).view(B * N)
-                at_logits = output.action_type_logits.view(B * N, 2)
-                tgt_logits = output.target_logits.view(B * N, N)
-                amt_logits = output.amount_logits.view(B * N, self.model.config.n_amount_bins)
-                value_labels = batch["value_target"].to(device).float()
-                loss = (
-                    action_type_loss_weight * _safe_ce(at_logits, at_flat, ce_override=ce_action_type)
-                    + _safe_ce(tgt_logits, tgt_flat)
-                    + _safe_ce(amt_logits, amt_flat, ce_override=ce_amount)
-                    + value_loss_weight * mse_loss(output.value.squeeze(-1).squeeze(-1), value_labels)
-                )
+                with torch.autocast(device_type=device.type, dtype=_amp_dtype, enabled=_use_amp):
+                    output, _ = self.model(
+                        batch["planet_features"].to(device),
+                        batch["fleet_features"].to(device),
+                        batch["fleet_mask"].to(device),
+                        batch["global_features"].to(device),
+                        batch["planet_mask"].to(device),
+                    )
+                    B, N = batch["action_types"].shape
+                    assert N == self.model.config.max_planets, f"Batch planet dim {N} != model max_planets {self.model.config.max_planets}"
+                    at_flat = batch["action_types"].to(device).view(B * N)
+                    tgt_flat = batch["target_idxs"].to(device).view(B * N)
+                    amt_flat = batch["amount_bins"].to(device).view(B * N)
+                    at_logits = output.action_type_logits.view(B * N, 3)
+                    tgt_logits = output.target_logits.view(B * N, N)
+                    amt_logits = output.amount_logits.view(B * N, self.model.config.n_amount_bins)
+                    value_labels = batch["value_target"].to(device).float()
+                    loss = (
+                        action_type_loss_weight * _safe_ce(at_logits, at_flat, ce_override=ce_action_type)
+                        + _safe_ce(tgt_logits, tgt_flat)
+                        + _safe_ce(amt_logits, amt_flat, ce_override=ce_amount)
+                        + value_loss_weight * mse_loss(output.v_outcome.squeeze(-1), value_labels)
+                    )
+                    # score_diff MSE
+                    _sd_loss = mse_loss(
+                        output.v_score_diff.squeeze(-1),
+                        batch["score_diff"].to(device).float()
+                    )
+                    # aux ownership BCE (per-planet, masked)
+                    _pm_flat = batch["planet_mask"].to(device).view(B * N)
+                    _o10_logits = output.aux_ownership_10.view(B * N)
+                    _o10_labels = (batch["ownership_10"].to(device).view(B * N) == 1).float()
+                    _ol_logits  = output.aux_opponent_launch.view(B * N)
+                    _ol_labels  = batch["opponent_launch"].to(device).view(B * N).float()
 
-                loss.backward()
+                    loss = (loss
+                        + score_diff_loss_weight     * _sd_loss
+                        + aux_ownership_weight       * _safe_bce(_o10_logits, _o10_labels, _pm_flat)
+                        + aux_opponent_launch_weight * _safe_bce(_ol_logits,  _ol_labels,  _pm_flat))
+
+                _scaler.scale(loss).backward()
+                _scaler.unscale_(optimizer)
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
-                optimizer.step()
+                _scaler.step(optimizer)
+                _scaler.update()
 
                 train_loss_total += loss.item()
                 train_steps += 1
@@ -319,7 +432,7 @@ class ILTrainer(BaseTrainer):
 
             with torch.no_grad():
                 for batch in val_loader:
-                    output = self.model(
+                    output, _ = self.model(
                         batch["planet_features"].to(device),
                         batch["fleet_features"].to(device),
                         batch["fleet_mask"].to(device),
@@ -331,7 +444,7 @@ class ILTrainer(BaseTrainer):
                     at_flat = batch["action_types"].to(device).view(B * N)
                     tgt_flat = batch["target_idxs"].to(device).view(B * N)
                     amt_flat = batch["amount_bins"].to(device).view(B * N)
-                    at_logits = output.action_type_logits.view(B * N, 2)
+                    at_logits = output.action_type_logits.view(B * N, 3)
                     tgt_logits = output.target_logits.view(B * N, N)
                     amt_logits = output.amount_logits.view(B * N, self.model.config.n_amount_bins)
                     value_labels = batch["value_target"].to(device).float()
@@ -339,8 +452,24 @@ class ILTrainer(BaseTrainer):
                         action_type_loss_weight * _safe_ce(at_logits, at_flat, ce_override=ce_action_type)
                         + _safe_ce(tgt_logits, tgt_flat)
                         + _safe_ce(amt_logits, amt_flat, ce_override=ce_amount)
-                        + value_loss_weight * mse_loss(output.value.squeeze(-1).squeeze(-1), value_labels)
+                        + value_loss_weight * mse_loss(output.v_outcome.squeeze(-1), value_labels)
                     )
+                    # score_diff MSE
+                    _sd_loss = mse_loss(
+                        output.v_score_diff.squeeze(-1),
+                        batch["score_diff"].to(device).float()
+                    )
+                    # aux ownership BCE (per-planet, masked)
+                    _pm_flat = batch["planet_mask"].to(device).view(B * N)
+                    _o10_logits = output.aux_ownership_10.view(B * N)
+                    _o10_labels = (batch["ownership_10"].to(device).view(B * N) == 1).float()
+                    _ol_logits  = output.aux_opponent_launch.view(B * N)
+                    _ol_labels  = batch["opponent_launch"].to(device).view(B * N).float()
+
+                    loss = (loss
+                        + score_diff_loss_weight     * _sd_loss
+                        + aux_ownership_weight       * _safe_bce(_o10_logits, _o10_labels, _pm_flat)
+                        + aux_opponent_launch_weight * _safe_bce(_ol_logits,  _ol_labels,  _pm_flat))
 
                     val_loss_total += loss.item()
                     val_steps += 1
@@ -397,3 +526,15 @@ class ILTrainer(BaseTrainer):
                 results = evaluator.run(epoch=epoch)
                 for opp, res in results.items():
                     print(f"  [Eval vs {opp}] win_rate={res.get('win_rate'):.2f}")
+                if self.config.eval_opponents:
+                    _primary_opp = self.config.eval_opponents[0]
+                    _wr = results.get(_primary_opp, {}).get("win_rate", None)
+                    if _wr is not None:
+                        if _wr > _best_win_rate:
+                            _best_win_rate = _wr
+                            _win_rate_no_improve = 0
+                        else:
+                            _win_rate_no_improve += 1
+                        if _patience > 0 and _win_rate_no_improve >= _patience:
+                            print(f"Early stopping: win rate did not improve for {_patience} evaluations.")
+                            break

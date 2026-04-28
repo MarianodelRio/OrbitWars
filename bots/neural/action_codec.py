@@ -7,14 +7,13 @@ import numpy as np
 from .types import ActionContext, PerPlanetLabels
 
 BINS = [0.05, 0.1, 0.2, 0.3, 0.5, 0.7, 0.85, 1.0]  # indices 0-7
-MIN_CAPTURE_BIN = 8  # sentinel bin: send exactly min_to_capture ships
 
 
 class ActionCodec:
     NO_OP = 0
     LAUNCH = 1
 
-    def __init__(self, n_amount_bins: int = 9, angular_diff_threshold: float = math.pi / 4) -> None:
+    def __init__(self, n_amount_bins: int = 8, angular_diff_threshold: float = math.pi / 4) -> None:
         self.n_amount_bins = n_amount_bins
         self.BINS = BINS
         self.angular_diff_threshold = angular_diff_threshold
@@ -114,6 +113,7 @@ class ActionCodec:
         planets: np.ndarray,
         max_planets: int,
         angular_velocity: float = 0.0,
+        raw_ship_counts: np.ndarray | None = None,
     ) -> list:
         """Decode PlanetPolicyOutput into a list of game actions.
 
@@ -141,7 +141,7 @@ class ActionCodec:
 
         # action_type_logits: (max_planets, 2)
         # target_logits: (max_planets, max_planets)
-        # amount_logits: (max_planets, 5)
+        # amount_logits: (max_planets, n_amount_bins)
 
         actions = []
         n = min(context.n_planets, max_planets)
@@ -168,17 +168,15 @@ class ActionCodec:
             target_idx = int(np.argmax(target_logits_i))
 
             amount_bin = int(np.argmax(amount_logits[i]))
-            amount_bin = int(np.clip(amount_bin, 0, len(self.BINS)))
+            amount_bin = int(np.clip(amount_bin, 0, len(self.BINS) - 1))
 
-            # Reverse normalization: col 5 in planet_features is ships/200
-            source_ships = float(planets[i, 5]) * 200.0
-
-            if amount_bin == MIN_CAPTURE_BIN:
-                # Fallback: send all ships as approximation for min-to-capture
-                n_ships = source_ships
+            if raw_ship_counts is not None and i < len(raw_ship_counts):
+                source_ships = float(raw_ship_counts[i])
             else:
-                fraction = self.BINS[amount_bin]
-                n_ships = fraction * source_ships
+                source_ships = 0.0
+
+            fraction = self.BINS[amount_bin]
+            n_ships = fraction * source_ships
             if n_ships < 1.0:
                 continue
 

@@ -281,9 +281,10 @@ def test_decode_launch_returns_one_action():
     # Planet 0 (my planet) launches toward planet 2
     output = _make_output(launch_planet=0, target_planet=2, amount_bin=4)
     planets = np.zeros((MAX_PLANETS, 10), dtype=np.float32)
-    planets[0, 5] = 0.5  # 100 ships
+    raw_ship_counts = np.zeros(MAX_PLANETS, dtype=np.float32)
+    raw_ship_counts[0] = 100.0
 
-    result = codec.decode_per_planet(output, ctx, planets, MAX_PLANETS)
+    result = codec.decode_per_planet(output, ctx, planets, MAX_PLANETS, raw_ship_counts=raw_ship_counts)
     assert len(result) == 1
 
 
@@ -292,9 +293,10 @@ def test_decode_action_format_is_three_element():
     ctx = _make_context(5)
     output = _make_output(launch_planet=0, target_planet=2, amount_bin=4)
     planets = np.zeros((MAX_PLANETS, 10), dtype=np.float32)
-    planets[0, 5] = 0.5
+    raw_ship_counts = np.zeros(MAX_PLANETS, dtype=np.float32)
+    raw_ship_counts[0] = 100.0
 
-    result = codec.decode_per_planet(output, ctx, planets, MAX_PLANETS)
+    result = codec.decode_per_planet(output, ctx, planets, MAX_PLANETS, raw_ship_counts=raw_ship_counts)
     action = result[0]
     assert len(action) == 3
     planet_id, angle, n_ships = action
@@ -307,9 +309,10 @@ def test_decode_planet_id_matches_source():
     ctx = _make_context(5)
     output = _make_output(launch_planet=0, target_planet=2, amount_bin=4)
     planets = np.zeros((MAX_PLANETS, 10), dtype=np.float32)
-    planets[0, 5] = 0.5
+    raw_ship_counts = np.zeros(MAX_PLANETS, dtype=np.float32)
+    raw_ship_counts[0] = 100.0
 
-    result = codec.decode_per_planet(output, ctx, planets, MAX_PLANETS)
+    result = codec.decode_per_planet(output, ctx, planets, MAX_PLANETS, raw_ship_counts=raw_ship_counts)
     planet_id = result[0][0]
     assert planet_id == int(ctx.planet_ids[0])
 
@@ -320,9 +323,10 @@ def test_decode_angle_correct_for_horizontal():
     ctx = _make_context(5)
     output = _make_output(launch_planet=0, target_planet=2, amount_bin=4)
     planets = np.zeros((MAX_PLANETS, 10), dtype=np.float32)
-    planets[0, 5] = 0.5
+    raw_ship_counts = np.zeros(MAX_PLANETS, dtype=np.float32)
+    raw_ship_counts[0] = 100.0
 
-    result = codec.decode_per_planet(output, ctx, planets, MAX_PLANETS)
+    result = codec.decode_per_planet(output, ctx, planets, MAX_PLANETS, raw_ship_counts=raw_ship_counts)
     _, angle, _ = result[0]
     assert abs(angle) < 1e-4
 

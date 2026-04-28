@@ -28,7 +28,8 @@ class PlanetPolicyConfig:
     dropout: float = 0.1
     max_planets: int = 50
     max_fleets: int = 200
-    n_amount_bins: int = 9
+    n_amount_bins: int = 8
+    lstm_bypass: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -129,6 +130,8 @@ class PlanetPolicyModel(nn.Module):
 
         # Stage 4: LSTM recurrence
         self.lstm = nn.LSTM(input_size=G, hidden_size=G, num_layers=1, batch_first=True)
+        self.lstm_bypass_linear = nn.Linear(self.config.G, self.config.G)
+        self.lstm_bypass_norm = nn.LayerNorm(self.config.G)
 
         # Action heads
         self.action_type_head = nn.Linear(E + G, 3)
@@ -277,8 +280,17 @@ class PlanetPolicyModel(nn.Module):
         )  # (B, G)
 
         # Stage 4: LSTM recurrence
-        lstm_out_seq, new_hidden = self.lstm(global_repr.unsqueeze(1), hidden_state)
-        lstm_out = lstm_out_seq.squeeze(1)  # (B, G)
+        if self.config.lstm_bypass:
+            lstm_out = self.lstm_bypass_norm(self.lstm_bypass_linear(global_repr))
+            B_dyn = global_repr.shape[0]
+            _dev = global_repr.device
+            new_hidden = (
+                torch.zeros(1, B_dyn, self.config.G, device=_dev),
+                torch.zeros(1, B_dyn, self.config.G, device=_dev),
+            )
+        else:
+            lstm_out_seq, new_hidden = self.lstm(global_repr.unsqueeze(1), hidden_state)
+            lstm_out = lstm_out_seq.squeeze(1)  # (B, G)
 
         # ── Autoregressive action head decode ──────────────────────────────────────
 

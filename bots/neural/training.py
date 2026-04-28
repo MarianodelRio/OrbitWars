@@ -14,6 +14,7 @@ during training only batch_size samples are in RAM at once.
 
 from __future__ import annotations
 
+import json
 import sys
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -126,6 +127,9 @@ class NeuralILDataset(Dataset):
                 "target_idxs": torch.from_numpy(encoded.planet_target_idxs).long(),
                 "amount_bins": torch.from_numpy(encoded.planet_amount_bins).long(),
                 "value_target": torch.tensor(encoded.value_target, dtype=torch.float32),
+                "score_diff":      torch.tensor(0.0, dtype=torch.float32),
+                "ownership_10":    torch.zeros(self._state_builder.max_planets, dtype=torch.long),
+                "opponent_launch": torch.zeros(self._state_builder.max_planets, dtype=torch.float32),
             }
 
         if self._use_pointer:
@@ -269,13 +273,16 @@ def build_il_cache(
 
     P = state_builder.max_planets
     FL = state_builder.max_fleets
+    Dp = state_builder.planet_feature_dim
+    Df = state_builder.fleet_feature_dim
+    Dg = state_builder.global_feature_dim
     # No compression: gzip decompresses the entire chunk (~1.6 MB for fleet_features)
     # on every access, which is slower than the lazy baseline.  Raw HDF5 reads are
     # O(row_bytes / 500 MB/s) ≈ 0.01 ms vs 5 ms for Python computation.
     compress: dict = {}
 
-    at_counts = np.zeros(2, dtype=np.int64)
-    amt_counts = np.zeros(5, dtype=np.int64)
+    at_counts = np.zeros(3, dtype=np.int64)
+    amt_counts = np.zeros(8, dtype=np.int64)
 
     episode_paths = [str(m.path) for m in catalog.episodes]
 
@@ -286,18 +293,21 @@ def build_il_cache(
         )
 
         # Resizable datasets — grow one episode batch at a time
-        ds_pf  = f.create_dataset("planet_features",  shape=(0, P, 10),  maxshape=(None, P, 10),  dtype="float32", chunks=(chunk_size, P, 10),  **compress)
-        ds_ff  = f.create_dataset("fleet_features",   shape=(0, FL, 8),  maxshape=(None, FL, 8),  dtype="float32", chunks=(chunk_size, FL, 8),  **compress)
+        ds_pf  = f.create_dataset("planet_features",  shape=(0, P, Dp),  maxshape=(None, P, Dp),  dtype="float32", chunks=(chunk_size, P, Dp),  **compress)
+        ds_ff  = f.create_dataset("fleet_features",   shape=(0, FL, Df), maxshape=(None, FL, Df), dtype="float32", chunks=(chunk_size, FL, Df), **compress)
         ds_fm  = f.create_dataset("fleet_mask",       shape=(0, FL),     maxshape=(None, FL),     dtype="uint8",   chunks=(chunk_size, FL),      **compress)
-        ds_gf  = f.create_dataset("global_features",  shape=(0, 4),      maxshape=(None, 4),      dtype="float32", chunks=(chunk_size, 4),       **compress)
+        ds_gf  = f.create_dataset("global_features",  shape=(0, Dg),     maxshape=(None, Dg),     dtype="float32", chunks=(chunk_size, Dg),      **compress)
         ds_pm  = f.create_dataset("planet_mask",      shape=(0, P),      maxshape=(None, P),      dtype="uint8",   chunks=(chunk_size, P),       **compress)
         ds_at  = f.create_dataset("action_types",     shape=(0, P),      maxshape=(None, P),      dtype="int8",    chunks=(chunk_size, P),       **compress)
         ds_ti  = f.create_dataset("target_idxs",      shape=(0, P),      maxshape=(None, P),      dtype="int8",    chunks=(chunk_size, P),       **compress)
         ds_ab  = f.create_dataset("amount_bins",      shape=(0, P),      maxshape=(None, P),      dtype="int8",    chunks=(chunk_size, P),       **compress)
         ds_vt  = f.create_dataset("value_target",     shape=(0,),        maxshape=(None,),        dtype="float32", chunks=(chunk_size,),         **compress)
         ds_ei  = f.create_dataset("episode_idx",      shape=(0,),        maxshape=(None,),        dtype="int32",   chunks=(chunk_size,),         **compress)
+        ds_sd  = f.create_dataset("score_diff",       shape=(0,),        maxshape=(None,),        dtype="float32", chunks=(chunk_size,))
+        ds_o10 = f.create_dataset("ownership_10",     shape=(0, P),      maxshape=(None, P),      dtype="int8",    chunks=(chunk_size, P))
+        ds_ol  = f.create_dataset("opponent_launch",  shape=(0, P),      maxshape=(None, P),      dtype="uint8",   chunks=(chunk_size, P))
 
-        all_datasets = [ds_pf, ds_ff, ds_fm, ds_gf, ds_pm, ds_at, ds_ti, ds_ab, ds_vt, ds_ei]
+        all_datasets = [ds_pf, ds_ff, ds_fm, ds_gf, ds_pm, ds_at, ds_ti, ds_ab, ds_vt, ds_ei, ds_sd, ds_o10, ds_ol]
         offset = 0
         n_episodes = len(catalog.episodes)
 
@@ -323,6 +333,11 @@ def build_il_cache(
 
             batch_pf, batch_ff, batch_fm, batch_gf, batch_pm = [], [], [], [], []
             batch_at, batch_ti, batch_ab, batch_vt, batch_ei = [], [], [], [], []
+            batch_sd, batch_o10, batch_ol = [], [], []
+
+            with h5py.File(meta.path, "r") as _ep_f:
+                ep_angular_velocity = float(_ep_f.attrs.get("angular_velocity", 0.0))
+                ep_initial_planets = json.loads(_ep_f.attrs.get("initial_planets_json", "[]"))
 
             with EpisodeReader(meta, cache=True) as reader:
                 for t in range(reader.total_steps):
@@ -330,7 +345,7 @@ def build_il_cache(
                     if step_filter is not None and not step_filter(step, meta):
                         continue
                     for player in players:
-                        state = state_builder.from_step(step, player)
+                        state = state_builder.from_step(step, player, angular_velocity=ep_angular_velocity, initial_planets=ep_initial_planets)
                         raw_actions = step.actions_p0 if player == 0 else step.actions_p1
                         vt = _value_for(player)
                         encoded = codec.encode_per_planet(
@@ -350,6 +365,9 @@ def build_il_cache(
                         batch_ab.append(encoded.planet_amount_bins.astype(np.int8))
                         batch_vt.append(np.float32(vt))
                         batch_ei.append(np.int32(ep_idx))
+                        batch_sd.append(np.float32(0.0))
+                        batch_o10.append(np.zeros(P, dtype=np.int8))
+                        batch_ol.append(np.zeros(P, dtype=np.uint8))
 
             if not batch_pf:
                 continue
@@ -366,6 +384,9 @@ def build_il_cache(
                 np.stack(batch_ab),
                 np.array(batch_vt, dtype=np.float32),
                 np.array(batch_ei, dtype=np.int32),
+                np.array(batch_sd, dtype=np.float32),
+                np.stack(batch_o10),
+                np.stack(batch_ol),
             ]
             for ds, arr in zip(all_datasets, arrays):
                 ds.resize(offset + n, axis=0)
@@ -373,12 +394,12 @@ def build_il_cache(
 
             # Accumulate class weight counts (vectorised)
             at_flat = arrays[5].ravel()  # action_types int8
-            valid_at = at_flat[(at_flat >= 0) & (at_flat <= 1)].astype(np.intp)
-            at_counts += np.bincount(valid_at, minlength=2)
+            valid_at = at_flat[(at_flat >= 0) & (at_flat <= 2)].astype(np.intp)
+            at_counts += np.bincount(valid_at, minlength=3)
 
             ab_flat = arrays[7].ravel()  # amount_bins int8
-            valid_ab = ab_flat[(ab_flat >= 0) & (ab_flat <= 4)].astype(np.intp)
-            amt_counts += np.bincount(valid_ab, minlength=5)
+            valid_ab = ab_flat[(ab_flat >= 0) & (ab_flat <= 7)].astype(np.intp)
+            amt_counts += np.bincount(valid_ab, minlength=8)
 
             offset += n
 
@@ -388,6 +409,10 @@ def build_il_cache(
         f.attrs["perspective"] = perspective
         f.attrs["n_episodes"] = n_episodes
         f.attrs["n_samples"] = offset
+        f.attrs["schema_version"] = 3
+        f.attrs["Dp"] = Dp
+        f.attrs["Df"] = Df
+        f.attrs["Dg"] = Dg
 
     print(f"  [cache] done — {offset:,} samples written to {cache_path}", flush=True)
 
@@ -418,6 +443,12 @@ class PrecomputedILDataset(Dataset):
 
         with h5py.File(self._path, "r") as f:
             self._n_h5 = int(f["planet_features"].shape[0])
+            sv = int(f.attrs.get("schema_version", 0))
+            if sv != 3:
+                raise ValueError(
+                    f"Cache schema version mismatch: expected 3, got {sv}. "
+                    f"Delete {self._path} and rebuild with build_il_cache."
+                )
             self._at_counts = np.array(f.attrs.get("at_counts", [1.0, 1.0]), dtype=np.float32)
             self._amt_counts = np.array(f.attrs.get("amt_counts", [1.0] * 5), dtype=np.float32)
 
@@ -473,6 +504,9 @@ class PrecomputedILDataset(Dataset):
             "target_idxs":     h5["target_idxs"][start:end],      # (B, P) int8
             "amount_bins":     h5["amount_bins"][start:end],       # (B, P) int8
             "value_target":    h5["value_target"][start:end],      # (B,) float32
+            "score_diff":      h5["score_diff"][start:end],
+            "ownership_10":    h5["ownership_10"][start:end],
+            "opponent_launch": h5["opponent_launch"][start:end],
         }
         self._buf_start = start
         self._buf_end = end
@@ -497,6 +531,9 @@ class PrecomputedILDataset(Dataset):
             "target_idxs":     torch.from_numpy(b["target_idxs"][loc].astype(np.int64)),
             "amount_bins":     torch.from_numpy(b["amount_bins"][loc].astype(np.int64)),
             "value_target":    torch.tensor(float(b["value_target"][loc]), dtype=torch.float32),
+            "score_diff":      torch.tensor(float(b["score_diff"][loc]), dtype=torch.float32),
+            "ownership_10":    torch.from_numpy(b["ownership_10"][loc].astype(np.int64)),
+            "opponent_launch": torch.from_numpy(b["opponent_launch"][loc].astype(np.float32)),
         }
 
 

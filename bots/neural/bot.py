@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import numpy as np
 import torch
 
 from bots.interface import Bot
@@ -37,9 +38,12 @@ class NeuralBot(Bot):
         if isinstance(obs, dict):
             player = obs.get("player", 0)
             state = self.state_builder.from_obs(obs, player)
+            _raw_planets = np.array(obs.get("planets", []), dtype=np.float32)
+            raw_ship_counts = _raw_planets[:, 5] if _raw_planets.shape[0] > 0 else np.array([], dtype=np.float32)
         else:
             player = obs.player
             state = self.state_builder.from_step(obs, player)
+            raw_ship_counts = obs.planets[:, 5].astype(np.float32) if obs.planets.shape[0] > 0 else np.array([], dtype=np.float32)
 
         pf = torch.tensor(state["planet_features"], dtype=torch.float32).unsqueeze(0).to(self.device)
         ff = torch.tensor(state["fleet_features"], dtype=torch.float32).unsqueeze(0).to(self.device)
@@ -58,7 +62,7 @@ class NeuralBot(Bot):
             v_shaped=output.v_shaped.squeeze(0),
         )
         planets_arr = state["planet_features"]
-        return self.codec.decode_per_planet(squeezed, state["context"], planets_arr, self.model.config.max_planets)
+        return self.codec.decode_per_planet(squeezed, state["context"], planets_arr, self.model.config.max_planets, raw_ship_counts=raw_ship_counts)
 
     def reset(self) -> None:
         """Reset episode-level LSTM hidden state."""
