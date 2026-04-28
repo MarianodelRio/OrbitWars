@@ -170,7 +170,7 @@ class PolicySampler:
                     ])
 
         # Value: handle (1,) or (1,1)
-        value = output.v_outcome.view(-1)[0]
+        value = output.v_shaped.view(-1)[0]
 
         return SampleResult(
             canonical=canonical,

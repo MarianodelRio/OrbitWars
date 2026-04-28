@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from kaggle_environments import make
+
 
 class OrbitWarsEnv:
     def __init__(self, state_builder, reward_fn, steps_per_episode: int = 500) -> None:
@@ -9,7 +11,10 @@ class OrbitWarsEnv:
         self._reward_fn = reward_fn
         self.steps_per_episode = steps_per_episode
 
-        self._kenv = None
+        self._kenv = make(
+            "orbit_wars",
+            configuration={"episodeSteps": self.steps_per_episode},
+        )
         self._opponent_fn = None
         self._player: int = 0
         self._episode_count: int = 0
@@ -27,11 +32,6 @@ class OrbitWarsEnv:
 
         self._episode_count += 1
 
-        from kaggle_environments import make
-        self._kenv = make(
-            "orbit_wars",
-            configuration={"episodeSteps": self.steps_per_episode},
-        )
         obs_list = self._kenv.reset()
         raw_obs = obs_list[self._player]["observation"]
         # Do NOT use raw_obs["player"] — it is always 0 after reset.

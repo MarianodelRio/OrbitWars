@@ -31,13 +31,13 @@
   "lr_schedule": "cosine",
   "normalize_advantages": true,
 
-  "gamma": 0.99,
+  "gamma": 0.997,
   "gae_lambda": 0.95,
 
-  "w_planets": 1.0,
-  "w_production": 0.5,
+  "w_planets": 0.5,
+  "w_production": 1.0,
   "w_ships": 0.1,
-  "reward_lambda": 0.1,
+  "reward_lambda": 0.5,
   "reward_clip_abs": 0.2,
   "r_terminal_win": 10.0,
   "r_terminal_loss": -10.0,
@@ -58,7 +58,8 @@
   "frozen_checkpoint": null,
   "max_snapshots": 5,
   "snapshot_every": 50,
-  "self_play_prob": 0.2,
+  "self_play_prob": 0.5,
+  "kl_bc_coef_decay_iters": 200,
 
   "eval_every": 100,
   "n_eval_matches": 20,
