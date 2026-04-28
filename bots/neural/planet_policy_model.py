@@ -247,9 +247,12 @@ class PlanetPolicyModel(nn.Module):
             rel_bias = rel_bias.reshape(B * self.config.n_heads, P, P)
 
         key_pad = ~planet_mask  # (B, P) True=padding
+        # Convert bool mask to float to avoid dtype mismatch with float attn_mask
+        # in nn.MultiheadAttention (mismatched types can produce NaN in PyTorch 2.x)
+        key_pad_float = torch.zeros_like(key_pad, dtype=torch.float32).masked_fill(key_pad, float('-inf'))
         x = planet_emb
         for block in self.planet_blocks:
-            x = block(x, attn_mask=rel_bias, key_padding_mask=key_pad)
+            x = block(x, attn_mask=rel_bias, key_padding_mask=key_pad_float)
         planet_ctx = x  # (B, P, E)
 
         # Stage 3: attention pooling
