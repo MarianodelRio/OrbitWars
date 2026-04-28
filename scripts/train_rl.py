@@ -14,8 +14,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import torch
 from training.utils.rl_config import RLConfig
 from bots.neural.planet_policy_model import PlanetPolicyConfig, PlanetPolicyModel
-from bots.neural.state_builder_v2 import StateBuilderV2
-from bots.neural.action_codec_v2 import ActionCodecV2
+from bots.neural.state_builder import StateBuilder
+from bots.neural.action_codec import ActionCodec
 from training.trainers.rl_trainer import RLTrainer
 
 
@@ -53,11 +53,11 @@ def main():
         model.load_state_dict(ckpt["state_dict"])
         print(f"Loaded weights from: {ckpt_path}")
 
-    state_builder = StateBuilderV2(
+    state_builder = StateBuilder(
         max_planets=planet_cfg.max_planets,
         max_fleets=planet_cfg.max_fleets,
     )
-    codec = ActionCodecV2(n_amount_bins=planet_cfg.n_amount_bins)
+    codec = ActionCodec(n_amount_bins=planet_cfg.n_amount_bins)
 
     RLTrainer(config, model, state_builder, codec).train()
 

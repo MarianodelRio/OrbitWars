@@ -1,161 +1,187 @@
-"""ActionCodec: encodes raw dataset actions to ModelLabels."""
+"""ActionCodec: per-planet encode/decode for PlanetPolicyModel."""
 
 import math
 
 import numpy as np
 
-from .types import ActionContext, ModelLabels
+from .types import ActionContext, PerPlanetLabels
 
 
 class ActionCodec:
     NO_OP = 0
     LAUNCH = 1
 
-    def __init__(self, n_amount_bins: int = 5) -> None:
+    def __init__(self, n_amount_bins: int = 5, angular_diff_threshold: float = math.pi / 4) -> None:
         self.n_amount_bins = n_amount_bins
         self.BINS = [0.1, 0.25, 0.5, 0.75, 1.0]
+        self.angular_diff_threshold = angular_diff_threshold
 
-    def encode(
+    def encode_per_planet(
         self,
         raw_actions: np.ndarray,
         context: ActionContext,
         planets: np.ndarray,
         value_target: float,
-    ) -> ModelLabels:
-        if raw_actions.shape[0] == 0:
-            return ModelLabels(
-                action_type=self.NO_OP,
-                source_idx=-1,
-                target_idx=-1,
-                amount_bin=-1,
-                value_target=value_target,
-            )
+        max_planets: int,
+    ) -> PerPlanetLabels:
+        """Encode raw actions into per-planet labels.
 
-        dominant = raw_actions[np.argmax(raw_actions[:, 2])]
+        raw_actions: (n_actions, 3) float array — [from_planet_id, angle, ships]
+        context: ActionContext for the current turn
+        planets: (n_planets, 7) float32 — raw planet array (col 5 = ships)
+        value_target: float game outcome for this player
+        max_planets: padding target
+        """
+        planet_action_types = np.full(max_planets, -1, dtype=np.int32)
+        planet_target_idxs = np.full(max_planets, -1, dtype=np.int32)
+        planet_amount_bins = np.full(max_planets, -1, dtype=np.int32)
+        my_planet_mask = np.zeros(max_planets, dtype=bool)
 
-        from_planet_id = int(dominant[0])
-        matches = np.where(context.planet_ids == from_planet_id)[0]
-        if len(matches) == 0:
-            return ModelLabels(
-                action_type=self.NO_OP,
-                source_idx=-1,
-                target_idx=-1,
-                amount_bin=-1,
-                value_target=value_target,
-            )
-        source_idx = int(matches[0])
+        # Build action map: from_planet_id -> action row (keep highest ship count)
+        action_map: dict[int, np.ndarray] = {}
+        if raw_actions.shape[0] > 0:
+            for k in range(raw_actions.shape[0]):
+                row = raw_actions[k]
+                pid = int(row[0])
+                if pid not in action_map or float(row[2]) > float(action_map[pid][2]):
+                    action_map[pid] = row
 
-        if context.n_planets <= 1:
-            return ModelLabels(
-                action_type=self.NO_OP,
-                source_idx=-1,
-                target_idx=-1,
-                amount_bin=-1,
-                value_target=value_target,
-            )
-
-        recorded_angle = float(dominant[1])
-        source_pos = context.planet_positions[source_idx]
-        source_x = float(source_pos[0])
-        source_y = float(source_pos[1])
-
-        best_idx = -1
-        best_diff = float("inf")
-        for j in range(context.n_planets):
-            if j == source_idx:
-                continue
-            cand_pos = context.planet_positions[j]
-            dx = float(cand_pos[0]) - source_x
-            dy = float(cand_pos[1]) - source_y
-            direction = math.atan2(dy, dx)
-            diff_raw = direction - recorded_angle
-            angular_diff = abs(((diff_raw + math.pi) % (2 * math.pi)) - math.pi)
-            if angular_diff < best_diff:
-                best_diff = angular_diff
-                best_idx = j
-        target_idx = best_idx
-
-        n_ships = float(dominant[2])
-        source_ships = float(planets[source_idx, 5])
-        if source_ships <= 0:
-            fraction = self.BINS[-1]
-        else:
-            fraction = float(np.clip(n_ships / source_ships, 0.0, 1.0))
-
+        n = min(context.n_planets, max_planets)
         bins_arr = np.array(self.BINS, dtype=np.float32)
-        amount_bin = int(np.argmin(np.abs(bins_arr - fraction)))
 
-        return ModelLabels(
-            action_type=self.LAUNCH,
-            source_idx=source_idx,
-            target_idx=target_idx,
-            amount_bin=amount_bin,
+        for i in range(n):
+            planet_id = int(context.planet_ids[i])
+            if context.my_planet_mask[i]:
+                my_planet_mask[i] = True
+                if planet_id in action_map:
+                    planet_action_types[i] = self.LAUNCH
+
+                    # Angular-diff target inference (same logic as action_codec.py lines 58-76)
+                    action_row = action_map[planet_id]
+                    recorded_angle = float(action_row[1])
+                    source_pos = context.planet_positions[i]
+                    source_x = float(source_pos[0])
+                    source_y = float(source_pos[1])
+
+                    best_idx = -1
+                    best_diff = float("inf")
+                    for j in range(context.n_planets):
+                        if j == i:
+                            continue
+                        cand_pos = context.planet_positions[j]
+                        dx = float(cand_pos[0]) - source_x
+                        dy = float(cand_pos[1]) - source_y
+                        direction = math.atan2(dy, dx)
+                        diff_raw = direction - recorded_angle
+                        angular_diff = abs(((diff_raw + math.pi) % (2 * math.pi)) - math.pi)
+                        if angular_diff < best_diff:
+                            best_diff = angular_diff
+                            best_idx = j
+
+                    if best_diff > self.angular_diff_threshold:
+                        planet_target_idxs[i] = -1
+                    else:
+                        planet_target_idxs[i] = best_idx
+
+                    # Quantize ship fraction to amount bin
+                    n_ships = float(action_row[2])
+                    source_ships = float(planets[i, 5]) if planets.shape[0] > i else 0.0
+                    if source_ships <= 0:
+                        fraction = self.BINS[-1]
+                    else:
+                        fraction = float(np.clip(n_ships / source_ships, 0.0, 1.0))
+                    planet_amount_bins[i] = int(np.argmin(np.abs(bins_arr - fraction)))
+                else:
+                    planet_action_types[i] = self.NO_OP
+                    # target and amount stay at -1
+            # else: my_planet_mask[i] is False, all three label arrays stay at -1 (PADDING)
+
+        return PerPlanetLabels(
+            planet_action_types=planet_action_types,
+            planet_target_idxs=planet_target_idxs,
+            planet_amount_bins=planet_amount_bins,
+            my_planet_mask=my_planet_mask,
             value_target=value_target,
         )
 
-    def decode(self, output, context: ActionContext, planets: np.ndarray) -> list:
-        """Decode a PolicyOutput into a list of game actions.
+    def decode_per_planet(
+        self,
+        output,
+        context: ActionContext,
+        planets: np.ndarray,
+        max_planets: int,
+    ) -> list:
+        """Decode PlanetPolicyOutput into a list of game actions.
 
-        output: PolicyOutput (from model.py) — may be batched (B=1 already squeezed by caller)
+        output: PlanetPolicyOutput (batch dim already squeezed by caller)
         context: ActionContext for the current turn
-        planets: (n_planets, 7) float32 array — for available ships
-        Returns: [] for NO_OP, or [[planet_id, angle, n_ships]] for LAUNCH
+        planets: (max_planets, 10) float32 — normalized planet_features (col 5 = ships/200)
+        max_planets: size of the padded planet dimension
+        Returns: list of [planet_id, angle, n_ships] actions
         """
+        # Import here to avoid circular import
+        from .planet_policy_model import PlanetPolicyOutput  # noqa: F401
+
         if context.n_planets == 0:
             return []
 
-        # 1. Action type
+        # Convert tensors to numpy
         action_type_logits = output.action_type_logits
         if hasattr(action_type_logits, "cpu"):
             action_type_logits = action_type_logits.cpu().numpy()
-        if int(np.argmax(action_type_logits)) == self.NO_OP:
-            return []
 
-        # 2. Source: argmax over source_logits masked to my_planet_mask
-        source_logits = output.source_logits
-        if hasattr(source_logits, "cpu"):
-            source_logits = source_logits.cpu().numpy()
-        source_logits = source_logits[:context.n_planets].copy()
-
-        my_mask = context.my_planet_mask
-        if not my_mask.any():
-            return []
-        source_logits[~my_mask] = -np.inf
-        source_idx = int(np.argmax(source_logits))
-
-        # 3. Target: argmax over target_logits excluding source_idx
         target_logits = output.target_logits
         if hasattr(target_logits, "cpu"):
             target_logits = target_logits.cpu().numpy()
-        target_logits = target_logits[:context.n_planets].copy()
-        target_logits[source_idx] = -np.inf
-        if np.all(np.isneginf(target_logits)):
-            return []
-        target_idx = int(np.argmax(target_logits))
 
-        # 4. Amount bin
         amount_logits = output.amount_logits
         if hasattr(amount_logits, "cpu"):
             amount_logits = amount_logits.cpu().numpy()
-        amount_bin = int(np.argmax(amount_logits))
-        amount_bin = int(np.clip(amount_bin, 0, len(self.BINS) - 1))
 
-        # 5. Ships to send
-        if planets.shape[0] > source_idx:
-            source_ships = float(planets[source_idx, 5])
-        else:
-            return []
-        n_ships = self.BINS[amount_bin] * source_ships
-        if n_ships < 1.0:
-            return []
+        # action_type_logits: (max_planets, 2)
+        # target_logits: (max_planets, max_planets)
+        # amount_logits: (max_planets, 5)
 
-        # 6. Angle from source to target
-        source_pos = context.planet_positions[source_idx]
-        target_pos = context.planet_positions[target_idx]
-        angle = math.atan2(
-            float(target_pos[1]) - float(source_pos[1]),
-            float(target_pos[0]) - float(source_pos[0]),
-        )
+        actions = []
+        n = min(context.n_planets, max_planets)
 
-        source_planet_id = int(context.planet_ids[source_idx])
-        return [[source_planet_id, angle, n_ships]]
+        for i in range(n):
+            if not context.my_planet_mask[i]:
+                continue
+
+            if int(np.argmax(action_type_logits[i])) == self.NO_OP:
+                continue
+
+            # LAUNCH
+            target_logits_i = target_logits[i, :context.n_planets].copy()
+            target_logits_i[i] = -np.inf  # mask self
+
+            # Also mask positions where planet_ids match (same planet id as source)
+            for j in range(context.n_planets):
+                if context.planet_ids[j] == context.planet_ids[i]:
+                    target_logits_i[j] = -np.inf
+
+            if np.all(np.isneginf(target_logits_i)):
+                continue
+
+            target_idx = int(np.argmax(target_logits_i))
+
+            amount_bin = int(np.argmax(amount_logits[i]))
+            amount_bin = int(np.clip(amount_bin, 0, len(self.BINS) - 1))
+
+            # Reverse normalization: col 5 in planet_features is ships/200
+            source_ships = float(planets[i, 5]) * 200.0
+            n_ships = self.BINS[amount_bin] * source_ships
+            if n_ships < 1.0:
+                continue
+
+            source_pos = context.planet_positions[i]
+            target_pos = context.planet_positions[target_idx]
+            angle = math.atan2(
+                float(target_pos[1]) - float(source_pos[1]),
+                float(target_pos[0]) - float(source_pos[0]),
+            )
+
+            actions.append([int(context.planet_ids[i]), angle, n_ships])
+
+        return actions

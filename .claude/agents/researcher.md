@@ -47,7 +47,10 @@ Search queries to consider:
 ## Output Format
 
 ```
-## Research Summary
+## Research Findings
+
+### Overview
+[2-3 sentences: what was investigated, what the key finding is, and the recommended direction — a self-contained intro]
 
 ### Task
 [One sentence: what was researched]
@@ -74,12 +77,32 @@ Search queries to consider:
 - [URL or file path for each source consulted]
 ```
 
+## Using the Advisor for Complex Questions
+
+When your findings surface a question that requires deep architectural reasoning — not just facts but judgment about tradeoffs under constraints — spawn the `advisor` subagent instead of guessing:
+
+**Escalate to Advisor when:**
+- Two or more valid approaches exist and the right choice depends on non-obvious system interactions
+- The question is about module architecture, interface design, or how multiple systems compose
+- You need to reason about failure modes or edge cases that require deep game mechanics knowledge
+- Algorithm selection involves constraints (turn budget, branching factor, memory) that require analysis, not just lookup
+
+**How to call the Advisor:**
+```
+Question: [single focused question — one decision point only]
+Context: [relevant game constraints, codebase state, what you've found so far]
+Relevant files: [file:line references already identified]
+Alternatives already considered: [list them so the Advisor doesn't repeat your work]
+```
+
+Incorporate the Advisor's recommendation into your Research Findings as the authoritative position. Attribute it: *"Architecture recommendation (Advisor): ..."*
+
 ## Rules
 
 - Do NOT write code, not even pseudocode with exact syntax
 - Do NOT modify any files
 - Do NOT invent findings — if external search returns nothing useful, say so and recommend based on first principles
 - Be specific: name the algorithm, the heuristic, the formula — not "use a smarter strategy"
-- If multiple approaches exist, rank them with explicit tradeoffs
+- If multiple approaches exist and the choice is non-obvious, escalate to the Advisor rather than guessing
 - Keep scope realistic: the project runs max 3 files per cycle
 - If the task doesn't need research (obvious fix or refactor), say so clearly in your output so the orchestrator knows

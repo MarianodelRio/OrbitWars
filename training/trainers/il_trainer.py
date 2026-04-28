@@ -37,7 +37,6 @@ from bots.neural.training import (
     NeuralILDataset,
     PrecomputedILDataset,
 )
-from bots.neural.pointer_model import PointerNetworkModel
 from bots.neural.planet_policy_model import PlanetPolicyModel
 from training.trainers.base_trainer import BaseTrainer
 
@@ -87,8 +86,6 @@ class ILTrainer(BaseTrainer):
         val_catalog = DataCatalog(val_episodes)
 
         perspective = builder_cfg.get("perspective", "winner")
-        use_pointer = isinstance(self.model, PointerNetworkModel)
-        use_planet_policy = isinstance(self.model, PlanetPolicyModel)
 
         # Resolve step_filter from config string
         step_filter = None
@@ -104,7 +101,7 @@ class ILTrainer(BaseTrainer):
         # Falls back to lazy NeuralILDataset if cache_path is absent.
         # -----------------------------------------------------------------
         cache_path_str = builder_cfg.get("cache_path")
-        use_cache = cache_path_str is not None and use_planet_policy
+        use_cache = cache_path_str is not None
 
         if use_cache:
             cache_path = Path(cache_path_str)
@@ -132,15 +129,11 @@ class ILTrainer(BaseTrainer):
             train_dataset = build_il_dataset(
                 train_catalog, self.state_builder, self.codec,
                 perspective=perspective,
-                use_pointer=use_pointer,
-                use_planet_policy=use_planet_policy,
                 step_filter=step_filter,
             )
             val_dataset = build_il_dataset(
                 val_catalog, self.state_builder, self.codec,
                 perspective=perspective,
-                use_pointer=use_pointer,
-                use_planet_policy=use_planet_policy,
                 step_filter=step_filter,
             )
 
@@ -177,18 +170,8 @@ class ILTrainer(BaseTrainer):
         value_loss_weight = self.config.value_loss_weight
         use_class_weights = self.config.use_class_weights
         print("\n=== Model ===")
-        if use_planet_policy:
-            print(f"  Type         : PlanetPolicy")
-        elif use_pointer:
-            print(f"  Type         : PointerNetwork")
-        else:
-            print(f"  Type         : FlatMLP")
-        if use_planet_policy:
-            print(f"  Architecture : planet_encoder({cfg.Dp}→{cfg.E}) fleet_encoder({cfg.Df}→{cfg.F}) global({cfg.G}) n_attn_heads={cfg.n_attn_heads}")
-        elif use_pointer:
-            print(f"  Architecture : planet_encoder(7→{cfg.planet_embed_dim}) global({cfg.global_dim})")
-        else:
-            print(f"  Architecture : {cfg.input_dim} → {cfg.hidden_dims}")
+        print(f"  Type         : PlanetPolicy")
+        print(f"  Architecture : planet_encoder({cfg.Dp}→{cfg.E}) fleet_encoder({cfg.Df}→{cfg.F}) global({cfg.G}) n_attn_heads={cfg.n_attn_heads}")
         print(f"  Parameters   : {total_params:,}")
         print(f"  Dropout      : {cfg.dropout}  |  lr={self.config.lr}  |  wd={weight_decay}  |  epochs={self.config.epochs}")
         print(f"  Perspective  : {perspective}  |  device={self.config.device}")
@@ -205,7 +188,7 @@ class ILTrainer(BaseTrainer):
                 # Note: counts are from the full dataset (all episodes), which is a
                 # good proxy for the train split (85% of data with same distribution).
                 at_counts, amt_counts = train_dataset.class_weight_counts
-            elif use_planet_policy:
+            else:
                 # Slow fallback: iterate train samples (used only without cache)
                 at_labels = [
                     v.item()
@@ -219,12 +202,6 @@ class ILTrainer(BaseTrainer):
                     for v in train_dataset[i]["amount_bins"]
                     if v.item() != -1
                 ]
-                at_counts = _np.bincount(at_labels, minlength=2).astype(_np.float32)
-                amt_valid = [a for a in amt_labels_raw if a >= 0]
-                amt_counts = _np.bincount(amt_valid, minlength=5).astype(_np.float32)
-            else:
-                at_labels = [train_dataset[i]["action_type"].item() for i in range(len(train_dataset))]
-                amt_labels_raw = [train_dataset[i]["amount_bin"].item() for i in range(len(train_dataset))]
                 at_counts = _np.bincount(at_labels, minlength=2).astype(_np.float32)
                 amt_valid = [a for a in amt_labels_raw if a >= 0]
                 amt_counts = _np.bincount(amt_valid, minlength=5).astype(_np.float32)
@@ -291,7 +268,45 @@ class ILTrainer(BaseTrainer):
 
             for batch in train_loader:
                 optimizer.zero_grad()
-                if use_planet_policy:
+                output = self.model(
+                    batch["planet_features"].to(device),
+                    batch["fleet_features"].to(device),
+                    batch["fleet_mask"].to(device),
+                    batch["global_features"].to(device),
+                    batch["planet_mask"].to(device),
+                )
+                B, N = batch["action_types"].shape
+                assert N == self.model.config.max_planets, f"Batch planet dim {N} != model max_planets {self.model.config.max_planets}"
+                at_flat = batch["action_types"].to(device).view(B * N)
+                tgt_flat = batch["target_idxs"].to(device).view(B * N)
+                amt_flat = batch["amount_bins"].to(device).view(B * N)
+                at_logits = output.action_type_logits.view(B * N, 2)
+                tgt_logits = output.target_logits.view(B * N, N)
+                amt_logits = output.amount_logits.view(B * N, self.model.config.n_amount_bins)
+                value_labels = batch["value_target"].to(device).float()
+                loss = (
+                    action_type_loss_weight * _safe_ce(at_logits, at_flat, ce_override=ce_action_type)
+                    + _safe_ce(tgt_logits, tgt_flat)
+                    + _safe_ce(amt_logits, amt_flat, ce_override=ce_amount)
+                    + value_loss_weight * mse_loss(output.value.squeeze(-1).squeeze(-1), value_labels)
+                )
+
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                optimizer.step()
+
+                train_loss_total += loss.item()
+                train_steps += 1
+
+            train_loss = train_loss_total / max(train_steps, 1)
+
+            # b. Val epoch
+            self.model.eval()
+            val_loss_total = 0.0
+            val_steps = 0
+
+            with torch.no_grad():
+                for batch in val_loader:
                     output = self.model(
                         batch["planet_features"].to(device),
                         batch["fleet_features"].to(device),
@@ -314,110 +329,6 @@ class ILTrainer(BaseTrainer):
                         + _safe_ce(amt_logits, amt_flat, ce_override=ce_amount)
                         + value_loss_weight * mse_loss(output.value.squeeze(-1).squeeze(-1), value_labels)
                     )
-                elif use_pointer:
-                    action_type_labels = batch["action_type"].to(device)
-                    source_labels = batch["source_idx"].to(device)
-                    target_labels = batch["target_idx"].to(device)
-                    amount_labels = batch["amount_bin"].to(device)
-                    value_labels = batch["value_target"].to(device)
-                    output = self.model(
-                        batch["planet_features"].to(device),
-                        batch["fleet_features"].to(device),
-                        batch["planet_mask"].to(device),
-                    )
-                    loss = (
-                        action_type_loss_weight * ce_action_type(output.action_type_logits, action_type_labels)
-                        + _safe_ce(output.source_logits, source_labels)
-                        + _safe_ce(output.target_logits, target_labels)
-                        + _safe_ce(output.amount_logits, amount_labels, ce_override=ce_amount)
-                        + value_loss_weight * mse_loss(output.value.squeeze(-1), value_labels)
-                    )
-                else:
-                    action_type_labels = batch["action_type"].to(device)
-                    source_labels = batch["source_idx"].to(device)
-                    target_labels = batch["target_idx"].to(device)
-                    amount_labels = batch["amount_bin"].to(device)
-                    value_labels = batch["value_target"].to(device)
-                    output = self.model(batch["state"].to(device))
-                    loss = (
-                        action_type_loss_weight * ce_action_type(output.action_type_logits, action_type_labels)
-                        + _safe_ce(output.source_logits, source_labels)
-                        + _safe_ce(output.target_logits, target_labels)
-                        + _safe_ce(output.amount_logits, amount_labels, ce_override=ce_amount)
-                        + value_loss_weight * mse_loss(output.value.squeeze(-1), value_labels)
-                    )
-
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
-                optimizer.step()
-
-                train_loss_total += loss.item()
-                train_steps += 1
-
-            train_loss = train_loss_total / max(train_steps, 1)
-
-            # b. Val epoch
-            self.model.eval()
-            val_loss_total = 0.0
-            val_steps = 0
-
-            with torch.no_grad():
-                for batch in val_loader:
-                    if use_planet_policy:
-                        output = self.model(
-                            batch["planet_features"].to(device),
-                            batch["fleet_features"].to(device),
-                            batch["fleet_mask"].to(device),
-                            batch["global_features"].to(device),
-                            batch["planet_mask"].to(device),
-                        )
-                        B, N = batch["action_types"].shape
-                        assert N == self.model.config.max_planets, f"Batch planet dim {N} != model max_planets {self.model.config.max_planets}"
-                        at_flat = batch["action_types"].to(device).view(B * N)
-                        tgt_flat = batch["target_idxs"].to(device).view(B * N)
-                        amt_flat = batch["amount_bins"].to(device).view(B * N)
-                        at_logits = output.action_type_logits.view(B * N, 2)
-                        tgt_logits = output.target_logits.view(B * N, N)
-                        amt_logits = output.amount_logits.view(B * N, self.model.config.n_amount_bins)
-                        value_labels = batch["value_target"].to(device).float()
-                        loss = (
-                            action_type_loss_weight * _safe_ce(at_logits, at_flat, ce_override=ce_action_type)
-                            + _safe_ce(tgt_logits, tgt_flat)
-                            + _safe_ce(amt_logits, amt_flat, ce_override=ce_amount)
-                            + value_loss_weight * mse_loss(output.value.squeeze(-1).squeeze(-1), value_labels)
-                        )
-                    elif use_pointer:
-                        action_type_labels = batch["action_type"].to(device)
-                        source_labels = batch["source_idx"].to(device)
-                        target_labels = batch["target_idx"].to(device)
-                        amount_labels = batch["amount_bin"].to(device)
-                        value_labels = batch["value_target"].to(device)
-                        output = self.model(
-                            batch["planet_features"].to(device),
-                            batch["fleet_features"].to(device),
-                            batch["planet_mask"].to(device),
-                        )
-                        loss = (
-                            action_type_loss_weight * ce_action_type(output.action_type_logits, action_type_labels)
-                            + _safe_ce(output.source_logits, source_labels)
-                            + _safe_ce(output.target_logits, target_labels)
-                            + _safe_ce(output.amount_logits, amount_labels, ce_override=ce_amount)
-                            + value_loss_weight * mse_loss(output.value.squeeze(-1), value_labels)
-                        )
-                    else:
-                        action_type_labels = batch["action_type"].to(device)
-                        source_labels = batch["source_idx"].to(device)
-                        target_labels = batch["target_idx"].to(device)
-                        amount_labels = batch["amount_bin"].to(device)
-                        value_labels = batch["value_target"].to(device)
-                        output = self.model(batch["state"].to(device))
-                        loss = (
-                            action_type_loss_weight * ce_action_type(output.action_type_logits, action_type_labels)
-                            + _safe_ce(output.source_logits, source_labels)
-                            + _safe_ce(output.target_logits, target_labels)
-                            + _safe_ce(output.amount_logits, amount_labels, ce_override=ce_amount)
-                            + value_loss_weight * mse_loss(output.value.squeeze(-1), value_labels)
-                        )
 
                     val_loss_total += loss.item()
                     val_steps += 1

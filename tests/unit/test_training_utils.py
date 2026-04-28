@@ -9,8 +9,7 @@ import torch
 from training.utils.metrics import MetricsLogger
 from training.utils.run_config import RunConfig
 from training.utils.checkpointing import CheckpointManager
-from bots.neural.model import PolicyValueConfig, PolicyValueModel
-from bots.neural.pointer_model import PointerNetworkConfig, PointerNetworkModel
+from bots.neural.planet_policy_model import PlanetPolicyConfig, PlanetPolicyModel
 from bots.neural.state_builder import StateBuilder
 from bots.neural.action_codec import ActionCodec
 
@@ -20,7 +19,16 @@ from bots.neural.action_codec import ActionCodec
 # ---------------------------------------------------------------------------
 
 def _make_model():
-    return PolicyValueModel(PolicyValueConfig(input_dim=16, hidden_dims=[32]))
+    cfg = PlanetPolicyConfig(max_planets=2, max_fleets=4)
+    return PlanetPolicyModel(cfg)
+
+
+def _make_state_builder():
+    return StateBuilder(max_planets=2, max_fleets=4)
+
+
+def _make_codec():
+    return ActionCodec(n_amount_bins=5)
 
 
 def _make_ckpt_manager(run_dir):
@@ -31,7 +39,7 @@ def _minimal_run_config(**overrides):
     defaults = dict(
         run_name="test_run",
         run_id="run_001",
-        model_config={"input_dim": 16, "hidden_dims": [32]},
+        model_config={"model_type": "planet_policy", "max_planets": 2},
         lr=1e-3,
         batch_size=32,
         epochs=10,
@@ -170,8 +178,8 @@ def test_run_config_new_fields_round_trip_json(tmp_path):
 def test_checkpoint_save_no_best_creates_epoch_and_last(tmp_path):
     mgr = _make_ckpt_manager(tmp_path)
     model = _make_model()
-    sb = StateBuilder()
-    codec = ActionCodec()
+    sb = _make_state_builder()
+    codec = _make_codec()
     mgr.save(model, sb, codec, epoch=1, metrics={"train_loss": 0.5, "val_loss": 0.4}, is_best=False)
     ckpt_dir = tmp_path / "checkpoints"
     assert (ckpt_dir / "epoch_001.pt").exists()
@@ -182,8 +190,8 @@ def test_checkpoint_save_no_best_creates_epoch_and_last(tmp_path):
 def test_checkpoint_save_best_creates_three_files(tmp_path):
     mgr = _make_ckpt_manager(tmp_path)
     model = _make_model()
-    sb = StateBuilder()
-    codec = ActionCodec()
+    sb = _make_state_builder()
+    codec = _make_codec()
     mgr.save(model, sb, codec, epoch=1, metrics={"train_loss": 0.5, "val_loss": 0.4}, is_best=True)
     ckpt_dir = tmp_path / "checkpoints"
     assert (ckpt_dir / "epoch_001.pt").exists()
@@ -194,8 +202,8 @@ def test_checkpoint_save_best_creates_three_files(tmp_path):
 def test_checkpoint_contains_expected_keys(tmp_path):
     mgr = _make_ckpt_manager(tmp_path)
     model = _make_model()
-    sb = StateBuilder()
-    codec = ActionCodec()
+    sb = _make_state_builder()
+    codec = _make_codec()
     mgr.save(model, sb, codec, epoch=1, metrics={"train_loss": 0.5, "val_loss": 0.4}, is_best=False)
     ckpt = torch.load(tmp_path / "checkpoints" / "epoch_001.pt", map_location="cpu", weights_only=False)
     expected_keys = {"config", "state_dict", "epoch", "train_loss", "val_loss", "timestamp",
@@ -203,33 +211,22 @@ def test_checkpoint_contains_expected_keys(tmp_path):
     assert expected_keys.issubset(set(ckpt.keys()))
 
 
-def test_checkpoint_flat_model_type(tmp_path):
-    """PolicyValueModel checkpoint has model_type == 'flat'."""
+def test_checkpoint_planet_policy_model_type(tmp_path):
+    """PlanetPolicyModel checkpoint has model_type == 'planet_policy'."""
     mgr = _make_ckpt_manager(tmp_path)
     model = _make_model()
-    sb = StateBuilder()
-    codec = ActionCodec()
+    sb = _make_state_builder()
+    codec = _make_codec()
     mgr.save(model, sb, codec, epoch=1, metrics={"train_loss": 0.5, "val_loss": 0.4}, is_best=False)
     ckpt = torch.load(tmp_path / "checkpoints" / "epoch_001.pt", map_location="cpu", weights_only=False)
-    assert ckpt["model_type"] == "flat"
-
-
-def test_checkpoint_pointer_model_type(tmp_path):
-    """PointerNetworkModel checkpoint has model_type == 'pointer'."""
-    mgr = _make_ckpt_manager(tmp_path)
-    model = PointerNetworkModel(PointerNetworkConfig())
-    sb = StateBuilder()
-    codec = ActionCodec()
-    mgr.save(model, sb, codec, epoch=1, metrics={"train_loss": 0.4, "val_loss": 0.35}, is_best=False)
-    ckpt = torch.load(tmp_path / "checkpoints" / "epoch_001.pt", map_location="cpu", weights_only=False)
-    assert ckpt["model_type"] == "pointer"
+    assert ckpt["model_type"] == "planet_policy"
 
 
 def test_list_checkpoints_excludes_best_and_last(tmp_path):
     mgr = _make_ckpt_manager(tmp_path)
     model = _make_model()
-    sb = StateBuilder()
-    codec = ActionCodec()
+    sb = _make_state_builder()
+    codec = _make_codec()
     mgr.save(model, sb, codec, epoch=1, metrics={"train_loss": 0.5, "val_loss": 0.4}, is_best=False)
     mgr.save(model, sb, codec, epoch=2, metrics={"train_loss": 0.4, "val_loss": 0.3}, is_best=True)
     paths = mgr.list_checkpoints()
@@ -291,13 +288,11 @@ def test_load_agent_checkpoint_name_reflects_file(tmp_path):
 def test_load_agent_checkpoint_loads_on_first_call(tmp_path):
     """End-to-end: save a real checkpoint and verify load_agent can load and call it."""
     from game.env.evaluator import load_agent
-    from bots.neural.model import PolicyValueConfig, PolicyValueModel
 
-    # Build a model whose input_dim matches StateBuilder(max_planets=2, max_fleets=2)
-    # input_dim = 2*7 + 2*7 = 28
-    model = PolicyValueModel(PolicyValueConfig(input_dim=28, hidden_dims=[16], max_planets=2))
-    sb = StateBuilder(max_planets=2, max_fleets=2)
-    codec = ActionCodec()
+    cfg = PlanetPolicyConfig(max_planets=2, max_fleets=4)
+    model = PlanetPolicyModel(cfg)
+    sb = StateBuilder(max_planets=2, max_fleets=4)
+    codec = ActionCodec(n_amount_bins=5)
     mgr = _make_ckpt_manager(tmp_path)
     mgr.save(model, sb, codec, epoch=1, metrics={"train_loss": 0.5, "val_loss": 0.4}, is_best=True)
     ckpt_path = str(tmp_path / "checkpoints" / "best.pt")
@@ -309,6 +304,8 @@ def test_load_agent_checkpoint_loads_on_first_call(tmp_path):
         "player": 0,
         "planets": [[0, 0, 10.0, 20.0, 1.0, 50.0, 3.0], [1, 1, 80.0, 70.0, 1.0, 30.0, 2.0]],
         "fleets": [],
+        "comet_planet_ids": [],
+        "step": 0,
     }
     result = agent(obs)
     assert isinstance(result, list)

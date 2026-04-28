@@ -1,11 +1,11 @@
-"""Unit tests for ActionCodecV2 per-planet encode/decode."""
+"""Unit tests for ActionCodec per-planet encode/decode."""
 
 import math
 
 import numpy as np
 import pytest
 
-from bots.neural.action_codec_v2 import ActionCodecV2
+from bots.neural.action_codec import ActionCodec
 from bots.neural.types import ActionContext
 
 
@@ -43,7 +43,7 @@ def _make_planets(n=5, ships=100.0):
 # ---------------------------------------------------------------------------
 
 def test_encode_output_shapes():
-    codec = ActionCodecV2()
+    codec = ActionCodec()
     ctx = _make_context(5)
     planets = _make_planets(5)
     labels = codec.encode_per_planet(np.empty((0, 3), dtype=np.float32), ctx, planets, 1.0, MAX_PLANETS)
@@ -55,7 +55,7 @@ def test_encode_output_shapes():
 
 
 def test_encode_output_dtypes():
-    codec = ActionCodecV2()
+    codec = ActionCodec()
     ctx = _make_context(5)
     planets = _make_planets(5)
     labels = codec.encode_per_planet(np.empty((0, 3), dtype=np.float32), ctx, planets, 0.0, MAX_PLANETS)
@@ -72,18 +72,18 @@ def test_encode_output_dtypes():
 # ---------------------------------------------------------------------------
 
 def test_no_actions_my_planets_are_noop():
-    codec = ActionCodecV2()
+    codec = ActionCodec()
     ctx = _make_context(5)
     planets = _make_planets(5)
     labels = codec.encode_per_planet(np.empty((0, 3), dtype=np.float32), ctx, planets, 1.0, MAX_PLANETS)
 
     for i in range(ctx.n_planets):
         if ctx.my_planet_mask[i]:
-            assert labels.planet_action_types[i] == ActionCodecV2.NO_OP, f"planet {i} should be NO_OP"
+            assert labels.planet_action_types[i] == ActionCodec.NO_OP, f"planet {i} should be NO_OP"
 
 
 def test_no_actions_non_mine_are_padding():
-    codec = ActionCodecV2()
+    codec = ActionCodec()
     ctx = _make_context(5)
     planets = _make_planets(5)
     labels = codec.encode_per_planet(np.empty((0, 3), dtype=np.float32), ctx, planets, 1.0, MAX_PLANETS)
@@ -96,7 +96,7 @@ def test_no_actions_non_mine_are_padding():
 
 
 def test_padding_slots_beyond_n_planets_are_minus_one():
-    codec = ActionCodecV2()
+    codec = ActionCodec()
     ctx = _make_context(3)
     planets = _make_planets(3)
     labels = codec.encode_per_planet(np.empty((0, 3), dtype=np.float32), ctx, planets, 0.0, MAX_PLANETS)
@@ -114,7 +114,7 @@ def test_padding_slots_beyond_n_planets_are_minus_one():
 
 def test_launch_action_produces_launch_label():
     """An action from my planet should produce action_type=LAUNCH."""
-    codec = ActionCodecV2(angular_diff_threshold=math.pi)  # accept any angle
+    codec = ActionCodec(angular_diff_threshold=math.pi)  # accept any angle
     ctx = _make_context(5)
     planets = _make_planets(5, ships=100.0)
 
@@ -124,11 +124,11 @@ def test_launch_action_produces_launch_label():
 
     labels = codec.encode_per_planet(raw_actions, ctx, planets, 1.0, MAX_PLANETS)
 
-    assert labels.planet_action_types[0] == ActionCodecV2.LAUNCH
+    assert labels.planet_action_types[0] == ActionCodec.LAUNCH
 
 
 def test_launch_action_target_idx_in_range():
-    codec = ActionCodecV2(angular_diff_threshold=math.pi)
+    codec = ActionCodec(angular_diff_threshold=math.pi)
     ctx = _make_context(5)
     planets = _make_planets(5, ships=100.0)
 
@@ -142,7 +142,7 @@ def test_launch_action_target_idx_in_range():
 
 
 def test_launch_action_amount_bin_in_range():
-    codec = ActionCodecV2(angular_diff_threshold=math.pi)
+    codec = ActionCodec(angular_diff_threshold=math.pi)
     ctx = _make_context(5)
     planets = _make_planets(5, ships=100.0)
 
@@ -150,13 +150,13 @@ def test_launch_action_amount_bin_in_range():
     raw_actions = np.array([[source_id, 0.0, 50.0]], dtype=np.float32)
     labels = codec.encode_per_planet(raw_actions, ctx, planets, 1.0, MAX_PLANETS)
 
-    assert labels.planet_action_types[0] == ActionCodecV2.LAUNCH
+    assert labels.planet_action_types[0] == ActionCodec.LAUNCH
     assert 0 <= labels.planet_amount_bins[0] <= 4
 
 
 def test_ambiguous_target_marked_minus_one():
     """With threshold=0, an angle that doesn't match any planet → target_idx=-1."""
-    codec = ActionCodecV2(angular_diff_threshold=0.0)
+    codec = ActionCodec(angular_diff_threshold=0.0)
     ctx = _make_context(5)
     planets = _make_planets(5, ships=100.0)
 
@@ -167,13 +167,13 @@ def test_ambiguous_target_marked_minus_one():
     labels = codec.encode_per_planet(raw_actions, ctx, planets, 1.0, MAX_PLANETS)
 
     # action_type is still LAUNCH (has an action) but target_idx is -1
-    assert labels.planet_action_types[0] == ActionCodecV2.LAUNCH
+    assert labels.planet_action_types[0] == ActionCodec.LAUNCH
     assert labels.planet_target_idxs[0] == -1
 
 
 def test_amount_bin_half_ships():
     """Sending half of 100 ships → fraction=0.5 → BINS=[.1,.25,.5,.75,1.0] → bin 2."""
-    codec = ActionCodecV2(angular_diff_threshold=math.pi)
+    codec = ActionCodec(angular_diff_threshold=math.pi)
     ctx = _make_context(5)
     planets = _make_planets(5, ships=100.0)
 
@@ -181,12 +181,12 @@ def test_amount_bin_half_ships():
     raw_actions = np.array([[source_id, 0.0, 50.0]], dtype=np.float32)
     labels = codec.encode_per_planet(raw_actions, ctx, planets, 1.0, MAX_PLANETS)
 
-    assert labels.planet_action_types[0] == ActionCodecV2.LAUNCH
+    assert labels.planet_action_types[0] == ActionCodec.LAUNCH
     assert labels.planet_amount_bins[0] == 2  # closest bin to 0.5
 
 
 def test_my_planet_mask_matches_context():
-    codec = ActionCodecV2()
+    codec = ActionCodec()
     ctx = _make_context(6)
     planets = _make_planets(6)
     labels = codec.encode_per_planet(np.empty((0, 3), dtype=np.float32), ctx, planets, 0.0, MAX_PLANETS)
@@ -196,7 +196,7 @@ def test_my_planet_mask_matches_context():
 
 
 def test_value_target_preserved():
-    codec = ActionCodecV2()
+    codec = ActionCodec()
     ctx = _make_context(4)
     planets = _make_planets(4)
     labels = codec.encode_per_planet(np.empty((0, 3), dtype=np.float32), ctx, planets, -1.0, MAX_PLANETS)
@@ -205,7 +205,7 @@ def test_value_target_preserved():
 
 def test_multiple_actions_each_encoded():
     """Two launch actions from two different my-planets should both be LAUNCH."""
-    codec = ActionCodecV2(angular_diff_threshold=math.pi)
+    codec = ActionCodec(angular_diff_threshold=math.pi)
     ctx = _make_context(6)
     planets = _make_planets(6, ships=100.0)
 
@@ -219,8 +219,8 @@ def test_multiple_actions_each_encoded():
 
     labels = codec.encode_per_planet(raw_actions, ctx, planets, 1.0, MAX_PLANETS)
 
-    assert labels.planet_action_types[0] == ActionCodecV2.LAUNCH
-    assert labels.planet_action_types[1] == ActionCodecV2.LAUNCH
+    assert labels.planet_action_types[0] == ActionCodec.LAUNCH
+    assert labels.planet_action_types[1] == ActionCodec.LAUNCH
 
 
 # ---------------------------------------------------------------------------
@@ -254,7 +254,7 @@ def _make_output(n_planets=MAX_PLANETS, all_noop=False, launch_planet=0, target_
 
 
 def test_decode_returns_list():
-    codec = ActionCodecV2()
+    codec = ActionCodec()
     ctx = _make_context(5)
     output = _make_output(all_noop=True)
     planets = np.zeros((MAX_PLANETS, 10), dtype=np.float32)
@@ -265,7 +265,7 @@ def test_decode_returns_list():
 
 
 def test_decode_all_noop_returns_empty():
-    codec = ActionCodecV2()
+    codec = ActionCodec()
     ctx = _make_context(5)
     output = _make_output(all_noop=True)
     planets = np.zeros((MAX_PLANETS, 10), dtype=np.float32)
@@ -276,7 +276,7 @@ def test_decode_all_noop_returns_empty():
 
 
 def test_decode_launch_returns_one_action():
-    codec = ActionCodecV2()
+    codec = ActionCodec()
     ctx = _make_context(5)
     # Planet 0 (my planet) launches toward planet 2
     output = _make_output(launch_planet=0, target_planet=2, amount_bin=4)
@@ -288,7 +288,7 @@ def test_decode_launch_returns_one_action():
 
 
 def test_decode_action_format_is_three_element():
-    codec = ActionCodecV2()
+    codec = ActionCodec()
     ctx = _make_context(5)
     output = _make_output(launch_planet=0, target_planet=2, amount_bin=4)
     planets = np.zeros((MAX_PLANETS, 10), dtype=np.float32)
@@ -303,7 +303,7 @@ def test_decode_action_format_is_three_element():
 
 
 def test_decode_planet_id_matches_source():
-    codec = ActionCodecV2()
+    codec = ActionCodec()
     ctx = _make_context(5)
     output = _make_output(launch_planet=0, target_planet=2, amount_bin=4)
     planets = np.zeros((MAX_PLANETS, 10), dtype=np.float32)
@@ -316,7 +316,7 @@ def test_decode_planet_id_matches_source():
 
 def test_decode_angle_correct_for_horizontal():
     """Planet 0 at (0,50) → planet 2 at (20,50): angle should be 0."""
-    codec = ActionCodecV2()
+    codec = ActionCodec()
     ctx = _make_context(5)
     output = _make_output(launch_planet=0, target_planet=2, amount_bin=4)
     planets = np.zeros((MAX_PLANETS, 10), dtype=np.float32)
@@ -329,7 +329,7 @@ def test_decode_angle_correct_for_horizontal():
 
 def test_decode_skips_non_my_planets():
     """A LAUNCH decision on an enemy planet slot should be ignored."""
-    codec = ActionCodecV2()
+    codec = ActionCodec()
     n_real = 5
     ctx = _make_context(n_real)
 
@@ -353,7 +353,7 @@ def test_decode_skips_non_my_planets():
 
 def test_decode_zero_ships_skipped():
     """If source has 0 ships, action should be skipped (n_ships < 1)."""
-    codec = ActionCodecV2()
+    codec = ActionCodec()
     ctx = _make_context(5)
     output = _make_output(launch_planet=0, target_planet=2, amount_bin=0)
     planets = np.zeros((MAX_PLANETS, 10), dtype=np.float32)
@@ -364,7 +364,7 @@ def test_decode_zero_ships_skipped():
 
 
 def test_decode_empty_context():
-    codec = ActionCodecV2()
+    codec = ActionCodec()
     ctx = ActionContext(
         planet_ids=np.empty(0, dtype=np.int32),
         planet_positions=np.empty((0, 2), dtype=np.float32),

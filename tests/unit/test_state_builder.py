@@ -1,11 +1,11 @@
-"""Unit tests for StateBuilderV2 output shapes, dtypes, masks, and feature values."""
+"""Unit tests for StateBuilder output shapes, dtypes, masks, and feature values."""
 
 import math
 
 import numpy as np
 import pytest
 
-from bots.neural.state_builder_v2 import StateBuilderV2
+from bots.neural.state_builder import StateBuilder
 
 
 MAX_PLANETS = 10
@@ -17,7 +17,7 @@ MAX_FLEETS = 20
 # ---------------------------------------------------------------------------
 
 def _builder():
-    return StateBuilderV2(max_planets=MAX_PLANETS, max_fleets=MAX_FLEETS)
+    return StateBuilder(max_planets=MAX_PLANETS, max_fleets=MAX_FLEETS)
 
 
 def _obs(n_planets=5, n_fleets=8, player=0, step=100, comet_ids=None):

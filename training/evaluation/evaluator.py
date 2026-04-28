@@ -13,7 +13,6 @@ from game.env.evaluator import evaluate, load_agent
 
 OPPONENT_REGISTRY = {
     "heuristic.baseline": "bots.heuristic.baseline:agent_fn",
-    "heuristic.proximity_conqueror": "bots.heuristic.proximity_conqueror:agent_fn",
 }
 
 

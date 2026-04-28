@@ -2,7 +2,7 @@
 
 import pytest
 
-from bots.neural.state_builder_v2 import StateBuilderV2
+from bots.neural.state_builder import StateBuilder
 from training.rewards.potential import PotentialReward
 from training.envs.orbit_env import OrbitWarsEnv
 
@@ -11,7 +11,7 @@ STRUCTURED_STATE_KEYS = {"planet_features", "fleet_features", "fleet_mask", "pla
 
 
 def make_env(steps_per_episode=50):
-    state_builder = StateBuilderV2()
+    state_builder = StateBuilder()
     reward_fn = PotentialReward()
     env = OrbitWarsEnv(state_builder, reward_fn, steps_per_episode=steps_per_episode)
     env.set_opponent(lambda obs, config=None: [])

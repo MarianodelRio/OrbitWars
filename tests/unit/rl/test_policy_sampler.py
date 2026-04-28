@@ -9,7 +9,7 @@ import torch
 from bots.neural.planet_policy_model import PlanetPolicyConfig, PlanetPolicyModel, PlanetPolicyOutput
 from bots.neural.policy_sampler import PolicySampler, CanonicalAction, RLMasks
 from bots.neural.types import ActionContext
-from bots.neural.action_codec_v2 import ActionCodecV2
+from bots.neural.action_codec import ActionCodec
 
 
 def make_context(n=3, player=0):
@@ -46,7 +46,7 @@ def make_output(max_planets=10):
 
 def test_build_masks_shapes():
     max_planets = 10
-    sampler = PolicySampler(bins=ActionCodecV2().BINS, max_planets=max_planets)
+    sampler = PolicySampler(bins=ActionCodec().BINS, max_planets=max_planets)
     ctx = make_context(3)
     masks = sampler.build_masks(ctx, device="cpu")
 

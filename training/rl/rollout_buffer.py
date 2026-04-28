@@ -11,7 +11,7 @@ import torch
 
 @dataclass
 class RolloutStep:
-    state: dict              # StructuredStateV2 — dict of numpy arrays
+    state: dict              # StructuredState — dict of numpy arrays
     rl_masks: object         # RLMasks
     canonical: object        # CanonicalAction
     log_prob_old: float

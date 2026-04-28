@@ -42,7 +42,6 @@ class RLConfig:
     heuristic_opponents: list = field(
         default_factory=lambda: [
             "bots.heuristic.baseline:agent_fn",
-            "bots.heuristic.proximity_conqueror:agent_fn",
         ]
     )
     frozen_checkpoint: str | None = None

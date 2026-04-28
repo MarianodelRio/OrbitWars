@@ -10,7 +10,6 @@ import torch
 import dataclasses
 
 from bots.neural.bot import NeuralBot
-from bots.neural.pointer_model import PointerNetworkModel
 from bots.neural.planet_policy_model import PlanetPolicyModel
 
 
@@ -30,22 +29,13 @@ class CheckpointManager:
         metrics: dict,
         is_best: bool = False,
     ) -> Path:
-        if isinstance(model, PlanetPolicyModel):
-            model_type = "planet_policy"
-        elif isinstance(model, PointerNetworkModel):
-            model_type = "pointer"
-        else:
-            model_type = "flat"
-
-        if isinstance(model, PlanetPolicyModel):
-            config_to_save = dataclasses.asdict(model.config)
-        else:
-            config_to_save = model.config
+        model_type = "planet_policy"
+        config_to_save = dataclasses.asdict(model.config)
 
         checkpoint = {
             "model_type": model_type,
             "config": config_to_save,
-            "config_dict": model.config.__dict__ if not isinstance(model, PlanetPolicyModel) else config_to_save,
+            "config_dict": config_to_save,
             "state_dict": model.state_dict(),
             "max_planets": state_builder.max_planets,
             "max_fleets": state_builder.max_fleets,
@@ -84,12 +74,8 @@ class CheckpointManager:
         snapshots_dir = self._ckpt_dir / "snapshots"
         snapshots_dir.mkdir(parents=True, exist_ok=True)
 
-        if isinstance(model, PlanetPolicyModel):
-            model_type = "planet_policy"
-            config_to_save = dataclasses.asdict(model.config)
-        else:
-            model_type = "flat"
-            config_to_save = model.config if hasattr(model, "config") else {}
+        model_type = "planet_policy"
+        config_to_save = dataclasses.asdict(model.config)
 
         checkpoint = {
             "model_type": model_type,

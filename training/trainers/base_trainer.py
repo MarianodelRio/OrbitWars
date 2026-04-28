@@ -5,7 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from pathlib import Path
 
-from bots.neural.model import PolicyValueModel
+from bots.neural.planet_policy_model import PlanetPolicyModel
 from bots.neural.state_builder import StateBuilder
 from bots.neural.action_codec import ActionCodec
 from training.utils.run_config import RunConfig
@@ -17,7 +17,7 @@ class BaseTrainer(ABC):
     def __init__(
         self,
         config: RunConfig,
-        model: PolicyValueModel,
+        model: PlanetPolicyModel,
         state_builder: StateBuilder,
         codec: ActionCodec,
     ) -> None:

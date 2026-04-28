@@ -1,6 +1,6 @@
 ---
 name: new-feature
-description: Pipeline to implement a feature or improvement. Takes a Research Summary through planner → coder → reviewer. No tournament testing.
+description: Pipeline to implement a feature or improvement. Takes a Research Design Solution through planner → coder → reviewer. No tournament testing.
 user_invocable: true
 ---
 
@@ -16,12 +16,12 @@ You are the **Orchestrator** for a feature development cycle. You coordinate spe
 
 ---
 
-## Phase 0 — Research Summary
+## Phase 0 — Research Design Solution
 
-Ask the user to provide their Research Summary.
+Ask the user to provide their Research Design Solution.
 
 If they don't have one:
-> Run `/research` first to develop and formalize your idea, then come back with the Research Summary.
+> Run `/research` first to develop and formalize your idea, then come back with the Research Design Solution.
 
 Once received, confirm and proceed.
 
@@ -32,10 +32,10 @@ Once received, confirm and proceed.
 **Call the Agent tool** with `subagent_type: planner` and this prompt:
 
 ```
-Research Summary:
-[full Research Summary — verbatim, do not summarize or paraphrase]
+Research Design Solution:
+[full Research Design Solution — verbatim, do not summarize or paraphrase]
 
-Task: Based on the Research Summary above, produce a step-by-step implementation plan.
+Task: Based on the Research Design Solution above, produce a step-by-step implementation plan.
 ```
 
 Show the full planner output under **"## Plan"**, then ask:
@@ -44,7 +44,7 @@ Show the full planner output under **"## Plan"**, then ask:
 
 **Do not proceed without explicit approval.**
 
-If changes requested: re-spawn planner with original Research Summary + user feedback.
+If changes requested: re-spawn planner with original Research Design Solution + user feedback.
 
 ---
 
@@ -79,7 +79,7 @@ Show the full reviewer output under **"## Review"**.
 - If **APPROVE**: say **"Cycle complete. Feature is implemented and reviewed."**
 - If **REQUEST_CHANGES**: show the issues and ask:
   > Issues found. Start a new planning cycle to fix them? (yes / no)
-  If yes: return to Phase 1 with the reviewer's issues as the new task, keeping the original Research Summary.
+  If yes: return to Phase 1 with the reviewer's issues as the new task, keeping the original Research Design Solution.
 
 ---
 
@@ -87,7 +87,7 @@ Show the full reviewer output under **"## Review"**.
 
 | Phase | What happens | User action required |
 |-------|-------------|---------------------|
-| 0 | Provide Research Summary | Paste summary |
+| 0 | Provide Research Design Solution | Paste summary |
 | 1 | Planner produces plan | **Approve or request changes** |
 | 2 | Coder implements | Say "continue" |
 | 3 | Reviewer tests (pytest + simulation) | See verdict |
