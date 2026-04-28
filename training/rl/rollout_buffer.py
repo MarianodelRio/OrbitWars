@@ -107,7 +107,6 @@ class RolloutBuffer:
             # RLMasks — each is a tensor
             my_planet_mask = torch.stack([s.rl_masks.my_planet_mask.cpu() for s in batch_steps]).to(device)
             valid_target_mask = torch.stack([s.rl_masks.valid_target_mask.cpu() for s in batch_steps]).to(device)
-            planet_mask_rl = torch.stack([s.rl_masks.planet_mask.cpu() for s in batch_steps]).to(device)
 
             action_types = torch.tensor(
                 np.stack([s.canonical.action_types.astype(np.int64) for s in batch_steps]),
@@ -154,7 +153,6 @@ class RolloutBuffer:
                 "global_features": global_features,
                 "my_planet_mask": my_planet_mask,
                 "valid_target_mask": valid_target_mask,
-                "planet_mask_rl": planet_mask_rl,
                 "action_types": action_types,
                 "target_idxs": target_idxs,
                 "amount_bins": amount_bins,

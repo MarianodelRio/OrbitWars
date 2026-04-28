@@ -170,7 +170,7 @@ class RLTrainer:
             batches = self._buffer.get_batches(cfg.ppo_batch_size, cfg.device)
             for batch in batches:
                 self._optimizer.zero_grad()
-                loss, result = compute_ppo_loss(self.model, batch, self._sampler, cfg)
+                loss, result = compute_ppo_loss(self.model, batch, cfg)
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), cfg.max_grad_norm)
                 self._optimizer.step()

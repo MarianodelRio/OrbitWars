@@ -150,6 +150,9 @@ class NeuralBot(Bot):
             max_planets = config.max_planets
             max_fleets = config.max_fleets
             n_amount_bins = config.n_amount_bins
+            state_builder = StateBuilder(max_planets=max_planets, max_fleets=max_fleets)
+            codec = ActionCodec(n_amount_bins=n_amount_bins)
+            return cls(model=model, state_builder=state_builder, codec=codec, device=device)
         else:
             config: PolicyValueConfig = checkpoint["config"]
             max_planets = checkpoint.get("max_planets", config.max_planets)
@@ -157,11 +160,9 @@ class NeuralBot(Bot):
             n_amount_bins = checkpoint.get("n_amount_bins", config.n_amount_bins)
             model = PolicyValueModel(config)
             model.load_state_dict(checkpoint["state_dict"])
-
-        state_builder = StateBuilder(max_planets=max_planets, max_fleets=max_fleets)
-        codec = ActionCodec(n_amount_bins=n_amount_bins)
-
-        return cls(model=model, state_builder=state_builder, codec=codec, device=device)
+            state_builder = StateBuilder(max_planets=max_planets, max_fleets=max_fleets)
+            codec = ActionCodec(n_amount_bins=n_amount_bins)
+            return cls(model=model, state_builder=state_builder, codec=codec, device=device)
 
 
 # Module-level agent_fn for kaggle_environments compatibility

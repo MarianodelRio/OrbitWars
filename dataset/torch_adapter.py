@@ -5,12 +5,14 @@ This is the only file in dataset/ that imports torch.
 
 from __future__ import annotations
 
+import bisect
 from typing import Any, Callable
 
 import torch
 from torch.utils.data import Dataset
 
 from dataset.builder import TrainingSample
+from dataset.episode import EpisodeReader
 
 
 class OrbitDataset(Dataset):
@@ -56,8 +58,36 @@ class LazyOrbitDataset(Dataset):
         self._state_to_tensor = state_to_tensor
         self._action_to_tensor = action_to_tensor
 
-    def __len__(self) -> int:
-        raise NotImplementedError("LazyOrbitDataset not implemented — Ciclo C")
+        if catalog is not None:
+            self._episodes = self._catalog.episodes
+            self._offsets = [0]
+            for meta in self._episodes:
+                self._offsets.append(self._offsets[-1] + meta.total_steps)
+        else:
+            self._episodes = []
+            self._offsets = [0]
 
-    def __getitem__(self, idx: int):
-        raise NotImplementedError("LazyOrbitDataset not implemented — Ciclo C")
+    def __len__(self) -> int:
+        return self._offsets[-1]
+
+    def __getitem__(self, idx: int) -> dict:
+        ep_idx = bisect.bisect_right(self._offsets, idx) - 1
+        local_step = idx - self._offsets[ep_idx]
+        meta = self._episodes[ep_idx]
+        with EpisodeReader(meta) as reader:
+            samples = self._builder.build_episode(reader)
+        sample = samples[local_step]
+        return {
+            "state": self._state_to_tensor(sample.state),
+            "action": self._action_to_tensor(sample.action),
+            "reward": torch.tensor(
+                sample.reward if sample.reward is not None else 0.0,
+                dtype=torch.float32,
+            ),
+            "next_state": (
+                self._state_to_tensor(sample.next_state)
+                if sample.next_state is not None
+                else torch.tensor(0.0)
+            ),
+            "done": torch.tensor(sample.done, dtype=torch.bool),
+        }

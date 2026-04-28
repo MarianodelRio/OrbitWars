@@ -5,8 +5,6 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-import torch
-
 from bots.neural.training import NeuralILDataset, ILSample
 from bots.neural.types import ModelLabels, PerPlanetLabels
 

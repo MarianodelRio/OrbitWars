@@ -4,7 +4,6 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-import torch
 from bots.neural.planet_policy_model import PlanetPolicyModel, PlanetPolicyConfig, PlanetPolicyOutput
 
 

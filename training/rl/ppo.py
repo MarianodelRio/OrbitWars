@@ -96,7 +96,6 @@ def _batched_log_prob_and_entropy(
 def compute_ppo_loss(
     model: PlanetPolicyModel,
     batch: dict,
-    sampler,
     config,
 ) -> tuple[torch.Tensor, PPOLossResult]:
     """Compute PPO loss for a batch. Returns (total_loss_tensor, PPOLossResult)."""

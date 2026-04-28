@@ -14,10 +14,13 @@ from dataset.builder import SampleBuilder
 from dataset.torch_adapter import OrbitDataset, LazyOrbitDataset
 
 H5_PATH = Path("/home/mariano/Desktop/OrbitWars/data/matches/scoring.bot_vs_heuristic.baseline/20260421_172107_match_0001.h5")
+_H5_AVAILABLE = H5_PATH.exists()
 
 
 @pytest.fixture(scope="module")
 def catalog():
+    if not _H5_AVAILABLE:
+        pytest.skip("H5 test data not available at H5_PATH")
     return DataCatalog.scan(roots=[H5_PATH.parent])
 
 
@@ -56,9 +59,6 @@ def test_orbit_dataset(meta):
     assert item["done"].dtype == torch.bool
 
 
-def test_lazy_orbit_dataset_not_implemented():
+def test_lazy_orbit_dataset_none_catalog_len_zero():
     lazy = LazyOrbitDataset(None, None, None, None)
-    with pytest.raises(NotImplementedError):
-        len(lazy)
-    with pytest.raises(NotImplementedError):
-        lazy[0]
+    assert len(lazy) == 0

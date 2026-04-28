@@ -48,7 +48,32 @@ if GYM_AVAILABLE:
             return self._obs_to_flat(obs[0]["observation"] if obs else {})
 
         def step(self, action):
-            raise NotImplementedError("Step not implemented — use for inference/self-play scaffolding only")
+            planet_idx = int(round(float(action[0])))
+            planet_idx = max(0, min(planet_idx, MAX_PLANETS - 1))
+            angle = float(action[1])
+            ship_fraction = float(np.clip(action[2], 0.0, 1.0))
+
+            curr_obs = self._env.state[0]["observation"]
+            planets = curr_obs.get("planets", [])
+            player_actions = []
+            if planet_idx < len(planets) and planets[planet_idx][5] > 0:
+                n_ships = ship_fraction * planets[planet_idx][5]
+                if n_ships >= 1.0:
+                    player_actions = [[planet_idx, angle, n_ships]]
+
+            try:
+                opp_obs = self._env.state[1]["observation"]
+                opp_actions = self.bot_opponent(opp_obs)
+            except Exception:
+                opp_actions = []
+
+            step_result = self._env.step([player_actions, opp_actions])
+            self._steps_done += 1
+
+            done = step_result[0]["status"] in ("DONE", "INACTIVE") or self._steps_done >= self.steps
+            reward = float(step_result[0]["reward"]) if done else 0.0
+
+            return (self._obs_to_flat(curr_obs), reward, done, {})
 
         def render(self, mode="human"):
             pass

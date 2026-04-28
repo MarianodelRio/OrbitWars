@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -137,10 +138,37 @@ class DataCatalog:
         return f"DataCatalog({len(self._episodes)} episodes)"
 
     def save_index(self, path: Path) -> None:
-        # Ciclo B
-        raise NotImplementedError("save_index not implemented — Ciclo B")
+        data = [
+            {
+                "path": str(meta.path),
+                "bot0": meta.bot0,
+                "bot1": meta.bot1,
+                "winner": meta.winner,
+                "done_reason": meta.done_reason,
+                "total_steps": meta.total_steps,
+                "final_ships_p0": meta.final_ships_p0,
+                "final_ships_p1": meta.final_ships_p1,
+            }
+            for meta in self._episodes
+        ]
+        with open(path, "w") as f:
+            json.dump(data, f, indent=2)
 
     @classmethod
     def load_index(cls, path: Path) -> "DataCatalog":
-        # Ciclo B
-        raise NotImplementedError("load_index not implemented — Ciclo B")
+        with open(path, "r") as f:
+            data = json.load(f)
+        episodes = [
+            EpisodeMeta(
+                path=Path(d["path"]),
+                bot0=d["bot0"],
+                bot1=d["bot1"],
+                winner=d["winner"],
+                done_reason=d["done_reason"],
+                total_steps=d["total_steps"],
+                final_ships_p0=d["final_ships_p0"],
+                final_ships_p1=d["final_ships_p1"],
+            )
+            for d in data
+        ]
+        return cls(episodes)

@@ -66,7 +66,7 @@ def test_total_loss_has_grad():
     config = RLConfig(ppo_batch_size=4, normalize_advantages=True)
     batch = make_random_batch(B=4)
 
-    loss, result = compute_ppo_loss(model, batch, sampler, config)
+    loss, result = compute_ppo_loss(model, batch, config)
     assert loss.requires_grad
     # Should not raise
     loss.backward()
@@ -78,7 +78,7 @@ def test_approx_kl_nonneg():
     batch = make_random_batch(B=4)
 
     # Set old log_prob equal to new (after forward) to get approx_kl ~ 0
-    _, result = compute_ppo_loss(model, batch, sampler, config)
+    _, result = compute_ppo_loss(model, batch, config)
     # approx_kl = mean(old - new). With random old it can be negative or positive.
     # The key property: it must be a finite float.
     assert isinstance(result.approx_kl, float)
@@ -90,7 +90,7 @@ def test_clip_fraction_in_range():
     config = RLConfig(ppo_batch_size=4)
     batch = make_random_batch(B=4)
 
-    _, result = compute_ppo_loss(model, batch, sampler, config)
+    _, result = compute_ppo_loss(model, batch, config)
     assert 0.0 <= result.clip_fraction <= 1.0
 
 
@@ -99,7 +99,7 @@ def test_ppo_loss_result_fields():
     config = RLConfig(ppo_batch_size=4)
     batch = make_random_batch(B=4)
 
-    _, result = compute_ppo_loss(model, batch, sampler, config)
+    _, result = compute_ppo_loss(model, batch, config)
     assert hasattr(result, "total_loss")
     assert hasattr(result, "policy_loss")
     assert hasattr(result, "value_loss")

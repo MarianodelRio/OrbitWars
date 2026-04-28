@@ -172,10 +172,10 @@ class ILTrainer(BaseTrainer):
         print(f"  Batches  : {len(train_loader)} per epoch  (batch_size={self.config.batch_size})")
         cfg = self.model.config
         total_params = sum(p.numel() for p in self.model.parameters())
-        weight_decay = getattr(self.config, "weight_decay", 1e-4)
-        action_type_loss_weight = getattr(self.config, "action_type_loss_weight", 1.0)
-        value_loss_weight = getattr(self.config, "value_loss_weight", 0.5)
-        use_class_weights = getattr(self.config, "use_class_weights", True)
+        weight_decay = self.config.weight_decay
+        action_type_loss_weight = self.config.action_type_loss_weight
+        value_loss_weight = self.config.value_loss_weight
+        use_class_weights = self.config.use_class_weights
         print("\n=== Model ===")
         if use_planet_policy:
             print(f"  Type         : PlanetPolicy")
@@ -300,6 +300,7 @@ class ILTrainer(BaseTrainer):
                         batch["planet_mask"].to(device),
                     )
                     B, N = batch["action_types"].shape
+                    assert N == self.model.config.max_planets, f"Batch planet dim {N} != model max_planets {self.model.config.max_planets}"
                     at_flat = batch["action_types"].to(device).view(B * N)
                     tgt_flat = batch["target_idxs"].to(device).view(B * N)
                     amt_flat = batch["amount_bins"].to(device).view(B * N)
@@ -311,7 +312,7 @@ class ILTrainer(BaseTrainer):
                         action_type_loss_weight * _safe_ce(at_logits, at_flat, ce_override=ce_action_type)
                         + _safe_ce(tgt_logits, tgt_flat)
                         + _safe_ce(amt_logits, amt_flat, ce_override=ce_amount)
-                        + value_loss_weight * mse_loss(output.value.squeeze(-1), value_labels)
+                        + value_loss_weight * mse_loss(output.value.squeeze(-1).squeeze(-1), value_labels)
                     )
                 elif use_pointer:
                     action_type_labels = batch["action_type"].to(device)
@@ -371,6 +372,7 @@ class ILTrainer(BaseTrainer):
                             batch["planet_mask"].to(device),
                         )
                         B, N = batch["action_types"].shape
+                        assert N == self.model.config.max_planets, f"Batch planet dim {N} != model max_planets {self.model.config.max_planets}"
                         at_flat = batch["action_types"].to(device).view(B * N)
                         tgt_flat = batch["target_idxs"].to(device).view(B * N)
                         amt_flat = batch["amount_bins"].to(device).view(B * N)
@@ -382,7 +384,7 @@ class ILTrainer(BaseTrainer):
                             action_type_loss_weight * _safe_ce(at_logits, at_flat, ce_override=ce_action_type)
                             + _safe_ce(tgt_logits, tgt_flat)
                             + _safe_ce(amt_logits, amt_flat, ce_override=ce_amount)
-                            + value_loss_weight * mse_loss(output.value.squeeze(-1), value_labels)
+                            + value_loss_weight * mse_loss(output.value.squeeze(-1).squeeze(-1), value_labels)
                         )
                     elif use_pointer:
                         action_type_labels = batch["action_type"].to(device)

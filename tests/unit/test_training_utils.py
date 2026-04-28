@@ -126,7 +126,7 @@ def test_run_config_run_dir_contains_run_name_and_id():
     assert str(config.run_dir).endswith("my_run/run_007")
 
 
-def test_run_config_weight_decay_defaults_to_1e4():
+def test_run_config_weight_decay_defaults_to_1e_minus_4():
     config = _minimal_run_config()
     assert config.weight_decay == pytest.approx(1e-4)
 

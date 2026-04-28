@@ -2,7 +2,7 @@ import pytest
 from game.env.runner import run_match
 from bots.heuristic.sniper import agent_fn as sniper
 from bots.heuristic.baseline import agent_fn as baseline
-from bots.heuristic.baseline import agent_fn as baseline_bot
+from bots.heuristic.sniper import agent_fn as baseline_bot
 
 def test_sniper_vs_baseline_runs():
     result = run_match(sniper, baseline, steps=200)
