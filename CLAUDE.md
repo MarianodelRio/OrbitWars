@@ -7,6 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Kaggle Orbit Wars bot — an RTS-style competition where agents control planets and fleets, returning actions each turn. Development is iterative: design heuristic → implement → simulate → evaluate → refine.
 
 Full game rules: [`game/rules.md`](game/rules.md)
+Active model: [`PlanetPolicyModel`](bots/neural/planet_policy_model.py) (entity-centric policy/value network).
 
 ## Structure
 

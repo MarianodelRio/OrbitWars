@@ -1,212 +1,338 @@
 # Training Guide
 
-## Quick start
-
-Verify that game data exists before launching training:
+## Quick Start
 
 ```bash
-python scripts/probe_pipeline.py
+# Imitation Learning (IL)
+python train.py --config training/il_config.json
+
+# Reinforcement Learning (PPO)
+python train.py --config training/rl_config.json
+
+# Dry run — print config and exit without training
+python train.py --config training/rl_config.json --dry-run
+
+# Override device
+python train.py --config training/il_config.json --device cuda
 ```
 
-Then launch imitation learning training:
+Mode is auto-detected: configs containing `total_iterations` + `n_rollout_steps` are treated as RL; configs containing `epochs` are treated as IL.
+
+---
+
+## Imitation Learning (IL)
+
+### How It Works
+
+1. `DataCatalog.scan()` discovers all `.h5` episodes under `data/matches/` and `data/tournaments/`.
+2. Optional filters (bot name, winner-only, min/max steps) are applied.
+3. Episodes are shuffled and split into train/val by episode (not by step).
+4. `NeuralILDataset` (lazy) or `PrecomputedILDataset` (cached) provides `(state, labels)` batches.
+5. The model is trained with a combination of cross-entropy and MSE losses for multiple epochs.
+6. Checkpoints are saved each epoch; best checkpoint by validation loss is tagged `best`.
+
+### il_config.json Reference
+
+All fields correspond to `RunConfig` in `training/utils/run_config.py`.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `run_name` | str | required | Directory name under `runs/` |
+| `run_id` | str | required | Sub-run ID (auto-incremented if empty) |
+| `model_config` | dict | required | PlanetPolicyConfig fields as a dict |
+| `lr` | float | required | Learning rate |
+| `batch_size` | int | required | Samples per gradient step |
+| `epochs` | int | required | Total training epochs |
+| `val_split` | float | required | Fraction of episodes for validation |
+| `eval_every` | int | required | Run evaluator every N epochs |
+| `eval_opponents` | list | required | Registry names to evaluate against |
+| `n_eval_matches` | int | required | Matches per evaluation opponent |
+| `data_pipeline` | dict | required | Catalog and builder configuration (see below) |
+| `device` | str | required | `"cpu"`, `"cuda"`, or `"auto"` |
+| `seed` | int | required | Random seed for episode shuffle |
+| `weight_decay` | float | 1e-4 | AdamW / Adam weight decay |
+| `action_type_loss_weight` | float | 1.0 | Weight on action type CE loss |
+| `value_loss_weight` | float | 0.5 | Weight on outcome MSE loss |
+| `use_class_weights` | bool | True | Inverse-frequency class weighting for CE losses |
+| `resume_from` | str / None | None | Path to checkpoint to resume from |
+| `angular_diff_threshold` | float | π/4 | Max angle error for target inference in codec |
+| `lr_schedule` | str | `"constant"` | One of `"constant"`, `"cosine"`, `"step"`, `"cosine_with_warmup"` |
+| `early_stopping_patience` | int | 0 | Stop if no improvement for N epochs (0=disabled) |
+| `optimizer` | str | `"adam"` | `"adam"` or `"adamw"` |
+| `lr_min` | float | 1e-5 | Minimum LR for cosine schedule |
+| `warmup_epochs` | int | 0 | Warm-up epochs for `cosine_with_warmup` |
+| `num_workers` | int | 0 | DataLoader worker count |
+| `pin_memory` | bool | False | Pin tensors to GPU memory for faster transfer |
+| `persistent_workers` | bool | False | Keep DataLoader workers alive between epochs |
+| `use_amp` | bool | False | Automatic Mixed Precision (CUDA only) |
+| `amp_dtype` | str | `"bfloat16"` | AMP dtype: `"bfloat16"` or `"float16"` |
+| `augment_reflection` | bool | False | Random x/y-axis reflection augmentation |
+| `score_diff_loss_weight` | float | 0.3 | Weight on score-diff MSE auxiliary loss |
+| `aux_ownership_weight` | float | 0.1 | Weight on per-planet ownership BCE loss |
+| `aux_opponent_launch_weight` | float | 0.1 | Weight on per-planet opponent-launch BCE loss |
+
+The `data_pipeline` dict contains two sub-dicts:
+- `catalog`: `roots` (list of paths), `filter` (bot, opponent, winner_only, done_reason, min_steps, max_steps, max_episodes)
+- `builder`: `perspective` ("winner"/"loser"/"both"), `step_filter`, `cache_path`
+
+### Losses
+
+All losses use `ignore_index = -1` — labels set to `-1` (padding planets and non-owned planets) are excluded from every loss.
+
+| Loss | Term | Notes |
+|---|---|---|
+| Action type CE | `action_type_loss_weight * CE(at_logits, at_labels)` | Optional inverse-frequency class weights |
+| Target CE | `CE(target_logits, target_labels)` | Flat CE over pointer labels |
+| Amount CE | `CE(amount_logits, amount_labels)` | Optional inverse-frequency class weights |
+| Outcome MSE | `value_loss_weight * MSE(v_outcome, value_target)` | Win=1, Loss=-1, Draw=0 |
+| Score diff MSE | `score_diff_loss_weight * MSE(v_score_diff, score_diff)` | |
+| Ownership BCE | `aux_ownership_weight * BCE(aux_ownership_10, ownership_10)` | Per-planet, masked to real planets |
+| Opponent launch BCE | `aux_opponent_launch_weight * BCE(aux_opponent_launch, opponent_launch)` | Per-planet, masked |
+
+Class weights are clipped to `[0.1, 10.0]` relative to their mean to prevent extreme values.
+
+### Checkpoint Layout
+
+```
+runs/<run_name>/<run_id>/
+  checkpoints/
+    epoch_001.pt
+    epoch_002.pt
+    ...
+    best.pt           # epoch with lowest val_loss
+    last.pt           # most recent epoch
+  metrics/
+    train_metrics.csv
+    val_metrics.csv
+  eval/
+    epoch_NNN_vs_<opponent>.json
+  config.json
+```
+
+---
+
+## Reinforcement Learning (RL) with PPO
+
+### Training Loop
+
+`RLTrainer.train()` runs a fixed number of iterations:
+
+1. **Collect rollout**: Play `n_rollout_steps` steps against a sampled opponent. LSTM hidden state persists within each episode and resets on episode end. After collection, GAE advantages are computed with `gamma` and `gae_lambda`.
+2. **PPO update**: Run `ppo_epochs` passes over the buffer in mini-batches of size `ppo_batch_size`. Computes clipped policy loss, value loss, and entropy bonus. Optionally mixes in IL distillation batches or a KL-BC regularization term.
+3. **Logging**: Metrics are logged to CSV; the buffer is cleared.
+4. **Snapshot**: Every `snapshot_every` iterations, the current model is saved as a snapshot and added to the opponent pool.
+5. **Checkpoint**: Every `save_every` iterations, a full checkpoint including optimizer state is saved to `rl_last.pt`.
+6. **Evaluation**: Every `eval_every` iterations, the current model is evaluated against `eval_opponents`.
+
+Auto-resume: if `runs/<run_name>/<run_id>/checkpoints/rl_last.pt` exists, training resumes from that iteration.
+
+### Reward
+
+The reward at each step is the sum of three components:
+
+**Shaped reward** (potential-based):
+```
+r_shaped = lam * (gamma * Phi(s') - Phi(s))
+Phi(s) = w_production * (my_production / total_production)
+       + w_planets    * (my_planets / total_planets)
+       + w_ships      * log(1 + my_ships) / log(1001)
+```
+
+**Event rewards:**
+
+| Event | Value |
+|---|---|
+| Capture enemy planet | `r_event_capture_enemy` (default 0.5) |
+| Lose a planet | `r_event_lose_planet` (default -0.3) |
+| Eliminate opponent | `r_event_eliminate_opponent` (default 1.0) |
+| Capture comet | `r_event_capture_comet` (default 0.2) |
+| Explore bonus (first combat on a planet) | `r_explore` (default 0.01, active for first `explore_iterations`) |
+
+**Terminal rewards:**
+
+| Outcome | Value |
+|---|---|
+| Win | `r_terminal_win + r_terminal_margin_coef * margin` (defaults: 10.0 + 5.0*margin) |
+| Loss | `r_terminal_loss + r_terminal_margin_coef * margin` (defaults: -10.0 + 5.0*margin) |
+
+`margin = (my_ships - max_opp_ships) / (my_ships + max_opp_ships)`.
+
+### PPO Loss
+
+```
+total_loss = policy_loss - entropy_term + vf_coef * value_loss + kl_bc_coef * kl_bc
+```
+
+- **Policy loss**: clipped surrogate with `clip_eps`.
+- **Entropy term**: asymmetric per-head coefficients: `entropy_coef_action_type`, `entropy_coef_target`, `entropy_coef_amount`.
+- **Value loss**: MSE between predicted `v_shaped` and GAE returns, scaled by `vf_coef`.
+- **KL-BC term**: KL divergence from the current policy to a frozen BC reference policy (optional).
+
+### Opponent Pool
+
+The pool maintains up to `max_snapshots` historical snapshots of the trained model plus any configured `heuristic_opponents`. At the start of each rollout, an opponent is sampled:
+- With probability `self_play_prob`: use the current model.
+- Otherwise: sample uniformly from the pool (heuristic + snapshots).
+
+A `frozen_checkpoint` can be specified to seed the pool with a fixed pre-trained opponent.
+
+### IL Distillation
+
+If `il_distill_ratio > 0` and `il_data_cache_path` points to a valid HDF5 cache, then during each PPO mini-batch loop, with probability `il_distill_ratio` a mini-batch is drawn from the IL dataset instead of the RL buffer, and a cross-entropy loss (action type + target + amount, `ignore_index=-1`) is applied. This forces the policy to stay close to imitation data.
+
+### KL-to-BC Regularization
+
+If `bc_policy_path` is set, a frozen copy of that checkpoint is loaded as the BC reference model. During PPO updates, a KL divergence penalty between the current policy and the BC policy is added to the loss. The coefficient decays linearly from `kl_bc_coef_start` to `kl_bc_coef_end` over `kl_bc_coef_decay_iters` iterations.
+
+### rl_config.json Reference
+
+All fields correspond to `RLConfig` in `training/utils/rl_config.py`.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `n_rollout_steps` | int | 2048 | Steps collected per iteration |
+| `n_envs` | int | 1 | Number of parallel environments (currently single-env) |
+| `steps_per_episode` | int | 500 | Max steps per episode |
+| `ppo_epochs` | int | 4 | Gradient passes over the rollout buffer |
+| `ppo_batch_size` | int | 256 | Mini-batch size for PPO updates |
+| `clip_eps` | float | 0.2 | PPO clipping epsilon |
+| `vf_coef` | float | 0.5 | Value loss coefficient |
+| `ent_coef` | float | 0.01 | Global entropy coefficient (overridden per-head by asymmetric coefs) |
+| `max_grad_norm` | float | 0.5 | Gradient clip norm |
+| `lr` | float | 3e-4 | Learning rate |
+| `normalize_advantages` | bool | True | Standardize advantages per mini-batch |
+| `gamma` | float | 0.99 | Discount factor |
+| `gae_lambda` | float | 0.95 | GAE lambda |
+| `w_planets` | float | 1.0 | Potential weight for planet share |
+| `w_production` | float | 0.5 | Potential weight for production share |
+| `w_ships` | float | 0.1 | Potential weight for ship log-share |
+| `reward_lambda` | float | 0.1 | Shaping scale `lam` |
+| `reward_clip_abs` | float | 0.2 | Deprecated; ignored |
+| `r_terminal_win` | float | 10.0 | Win terminal reward |
+| `r_terminal_loss` | float | -10.0 | Loss terminal reward |
+| `r_terminal_margin_coef` | float | 5.0 | Margin multiplier on terminal reward |
+| `r_event_capture_enemy` | float | 0.5 | Reward for capturing an enemy planet |
+| `r_event_capture_comet` | float | 0.2 | Reward for capturing a comet |
+| `r_event_eliminate_opponent` | float | 1.0 | Reward for eliminating an opponent |
+| `r_event_lose_planet` | float | -0.3 | Penalty for losing a planet |
+| `r_event_ships_wasted_coef` | float | 0.0 | Penalty coef for ships lost in failed attacks |
+| `r_explore` | float | 0.01 | Exploration bonus for first planet contact |
+| `explore_iterations` | int | 200 | Iterations during which exploration bonus is active |
+| `max_snapshots` | int | 5 | Max historical model snapshots in opponent pool |
+| `snapshot_every` | int | 50 | Save snapshot every N iterations |
+| `heuristic_opponents` | list | `["bots.heuristic.baseline:agent_fn"]` | Heuristic opponents for the pool |
+| `frozen_checkpoint` | str / None | None | Checkpoint to seed the pool with |
+| `self_play_prob` | float | 0.3 | Probability of using current model as opponent |
+| `eval_every` | int | 100 | Evaluate every N iterations |
+| `n_eval_matches` | int | 10 | Matches per evaluation opponent |
+| `eval_opponents` | list | `["heuristic.baseline"]` | Registry names for evaluation |
+| `save_every` | int | 100 | Save checkpoint every N iterations |
+| `lr_schedule` | str | `"cosine"` | `"cosine"` or `"constant"` |
+| `run_name` | str | `"rl_run"` | Directory name under `runs/` |
+| `run_id` | str | `""` | Sub-run ID |
+| `device` | str | `"cpu"` | `"cpu"`, `"cuda"`, or `"auto"` |
+| `seed` | int | 42 | Random seed |
+| `total_iterations` | int | 1000 | Total training iterations |
+| `model_config` | dict | `{}` | PlanetPolicyConfig overrides |
+| `bc_policy_path` | str | `""` | Path to frozen BC reference checkpoint |
+| `kl_bc_coef_start` | float | 1.0 | Initial KL-BC coefficient |
+| `kl_bc_coef_end` | float | 0.1 | Final KL-BC coefficient after decay |
+| `kl_bc_coef_decay_iters` | int | 500 | Iterations over which KL-BC coef decays |
+| `il_distill_ratio` | float | 0.1 | Fraction of mini-batches replaced by IL data |
+| `il_data_cache_path` | str | `""` | Path to pre-computed IL cache HDF5 |
+| `entropy_coef_action_type` | float | 0.02 | Per-head entropy coef for action type |
+| `entropy_coef_target` | float | 0.005 | Per-head entropy coef for target |
+| `entropy_coef_amount` | float | 0.005 | Per-head entropy coef for amount |
+
+---
+
+## Evaluation CLI
 
 ```bash
-python scripts/train_il.py --config training/il_config.json
-# or equivalently
-make train
+# Evaluate a checkpoint against all registered bots (20 matches each)
+python train.py eval --checkpoint runs/<run_name>/<run_id>/checkpoints/best.pt
+
+# Specific opponents and match count
+python train.py eval \
+    --checkpoint runs/.../checkpoints/rl_last.pt \
+    --opponents heuristic.baseline heuristic.sniper \
+    --n-matches 30
 ```
 
-## What a run generates
+Output is printed as JSON with per-opponent win rate, draw rate, loss rate, and average scores.
 
-With the default `run_name: "neural_il"` and `run_id: ""` (auto-increment to `run_001`), the run directory is `runs/neural_il/run_001/`:
+---
 
-```
-runs/neural_il/run_001/
-├── config.json                          # Full resolved config snapshot written at startup
-├── checkpoints/
-│   ├── best.pt                          # Checkpoint with the lowest validation loss so far
-│   ├── last.pt                          # Checkpoint from the most recent completed epoch
-│   └── epoch_NNN.pt                     # Per-epoch checkpoint (e.g. epoch_001.pt, epoch_005.pt)
-├── metrics/
-│   ├── train.csv                        # Per-epoch training loss: fields epoch, loss
-│   └── val.csv                          # Per-epoch validation loss: fields epoch, loss
-└── eval/
-    └── epoch_NNN_vs_<opponent>.json     # Evaluation result JSON written every eval_every epochs
-```
+## GPU Training
 
-## `il_config.json` field reference
+### Prerequisites
 
-### Top-level fields
+- GCP VM with GPU (T4 or better)
+- NVIDIA driver installed on the VM
+- Python 3.10+ on the VM
+- `gcloud` CLI configured locally with `--project` and `--zone`
 
-| Field | Type | Default | Description |
-|---|---|---|---|
-| `run_name` | string | `"neural_il"` | Parent directory under `runs/` that groups related runs |
-| `run_id` | string | `""` | Empty string triggers auto-increment to the next available `run_NNN`; a non-empty value forces an exact name and will overwrite an existing run directory |
-| `lr` | float | `0.001` | Adam learning rate |
-| `batch_size` | int | `64` | Mini-batch size for training and validation |
-| `epochs` | int | `20` | Total number of training epochs |
-| `val_split` | float | `0.2` | Fraction of episodes held out for validation; episodes are shuffled with `seed` before splitting to avoid distribution shift when episodes are stored in matchup-type order |
-| `eval_every` | int | `5` | Run match evaluation every this many epochs |
-| `eval_opponents` | list[string] | `["heuristic.baseline"]` | Opponents to evaluate against; must be keys registered in `OPPONENT_REGISTRY` in `training/evaluation/evaluator.py`; the two currently registered values are `"heuristic.baseline"` and `"heuristic.proximity_conqueror"` |
-| `n_eval_matches` | int | `10` | Number of matches per opponent per evaluation |
-| `data_pipeline` | object | — | Data loading and feature-building configuration; see `docs/pipeline_config.md` for the full field reference |
-| `device` | string | `"cpu"` | PyTorch device string (`"cpu"`, `"cuda"`, `"mps"`) |
-| `seed` | int | `42` | Random seed for reproducibility and episode shuffle |
-| `weight_decay` | float | `1e-4` | L2 weight decay for the Adam optimiser |
-| `action_type_loss_weight` | float | `1.0` | Scalar multiplier applied to the `action_type` cross-entropy loss term; increase to emphasise NO_OP vs LAUNCH distinction |
-| `value_loss_weight` | float | `0.5` | Scalar multiplier applied to the value-head MSE loss term |
-| `use_class_weights` | bool | `true` | If `true`, inverse-frequency class weights (clipped to [0.1, 10.0]) are applied to the `action_type` and `amount_bin` cross-entropy losses to counter label imbalance (~60 % NO_OP, ~59 % amount bin-4) |
-| `resume_from` | string\|null | `null` | Path to a `.pt` checkpoint whose weights are loaded into the model **before** training starts. Relative paths are resolved from the repository root. The run always gets a new `run_id` — metrics history is not carried over. |
+### Setup in 3 commands
 
-### `model_config` fields — Flat MLP (`model_type: "flat"`, default)
-
-| Field | Type | Default | Description |
-|---|---|---|---|
-| `input_dim` | int | `1050` | Flattened input vector size; must equal `max_planets * 7 + max_fleets * 7`; if `max_planets` changes, recalculate this value or the model will silently accept wrong-shaped tensors |
-| `hidden_dims` | list[int] | `[256, 128]` | Width of each hidden layer in the MLP encoder |
-| `max_planets` | int | `50` | Maximum number of planets in the state vector; must match the value used in `StateBuilder` |
-| `n_amount_bins` | int | `5` | Number of discrete fleet-size bins used by `ActionCodec` |
-| `dropout` | float | `0.1` | Dropout probability applied in the MLP encoder |
-
-### `model_config` fields — Pointer Network (`model_type: "pointer"`)
-
-The Pointer Network replaces the flat MLP with a per-planet attention architecture. Instead of a flattened state vector, it takes a `(max_planets, 7)` planet feature matrix and a `(max_fleets * 7,)` fleet feature vector, plus a boolean padding mask. Source and target logits are produced via dot-product attention, so the model directly addresses planets by position rather than learning a fixed-width projection.
-
-To enable, add `"model_type": "pointer"` to `model_config` and remove `input_dim`/`hidden_dims`.
-
-| Field | Type | Default | Description |
-|---|---|---|---|
-| `model_type` | string | `"flat"` | `"pointer"` to instantiate `PointerNetworkModel`; `"flat"` (default) for `PolicyValueModel` |
-| `planet_input_dim` | int | `7` | Features per planet slot |
-| `fleet_input_dim` | int | `700` | Flattened fleet feature vector size (`max_fleets * 7`) |
-| `planet_embed_dim` | int | `64` | Output dimension of the per-planet embedding MLP |
-| `global_dim` | int | `128` | Hidden dimension of the global context projection |
-| `max_planets` | int | `50` | Maximum planet slots; must match `StateBuilder.max_planets` |
-| `max_fleets` | int | `100` | Maximum fleet slots; must match `StateBuilder.max_fleets` |
-| `n_amount_bins` | int | `5` | Number of discrete fleet-size bins |
-| `dropout` | float | `0.1` | Dropout probability |
-
-**Example `il_config.json` for the Pointer Network:**
-
-```json
-{
-  "run_name": "pointer_il",
-  "model_config": {
-    "model_type": "pointer",
-    "planet_embed_dim": 64,
-    "global_dim": 128,
-    "max_planets": 50,
-    "max_fleets": 100,
-    "n_amount_bins": 5,
-    "dropout": 0.1
-  },
-  "lr": 0.001,
-  "batch_size": 64,
-  "epochs": 50,
-  "weight_decay": 1e-4,
-  "action_type_loss_weight": 1.0,
-  "value_loss_weight": 0.5,
-  "use_class_weights": true,
-  "data_pipeline": {
-    "catalog": { "roots": null, "filter": { "bot": "heuristic.sniper" } },
-    "builder": { "perspective": "both", "mode": "il_step" }
-  }
-}
+```bash
+git clone <repo-url> && cd OrbitWars
+bash setup.sh
+source .venv/bin/activate
 ```
 
-## Training tips
+### Transfer data from Windows
 
-### Class imbalance
+Option A (primary):
+```bash
+gcloud compute scp --recurse ./data/ <VM_NAME>:~/OrbitWars/data/ --project <PROJECT> --zone <ZONE>
+```
 
-The default dataset has significant label imbalance: about 60 % of steps are NO_OP and ~59 % of LAUNCH steps use amount bin 4 (full fleet). Without correction the model quickly learns to always predict NO_OP / bin-4 and converges to a near-optimal prior rather than learning the actual policy.
+Option B (requires SSH key or WSL/Git Bash):
+```bash
+rsync -avz ./data/ <user>@<VM_IP>:~/OrbitWars/data/
+```
 
-Set `use_class_weights: true` (default) to apply inverse-frequency weighting to `action_type` and `amount_bin` losses. The weights are computed from the training split at the start of each run and are printed in the model summary.
+### Training commands
 
-### Perspective
+```bash
+make train                                      # IL training
+make train-rl CONFIG=training/rl_config.json   # RL training
+make test-unit                                  # run unit tests
+```
 
-Use `"perspective": "both"` (in `data_pipeline.builder`) instead of `"winner"`. With `"winner"` the value head sees only `+1.0` labels — it wastes gradient and adds noise without contributing information. `"both"` provides `+1.0` / `-1.0` labels and allows the value head to learn a meaningful win-probability signal.
+### Note on rl_config.json
 
-### Val split ordering
+`training/rl_config.json` is not committed to the repo. `make train-rl` will fail with a clear error if the file is missing. You must create or copy this file before running RL training.
 
-Episodes are sorted by matchup type on disk. Without shuffling, the last 20 % may consist entirely of one matchup, making val_loss measure out-of-distribution performance. The trainer shuffles episodes using `seed` before splitting — but if you supply a custom catalog pre-sorted in an unusual way, verify the split looks balanced.
+### Troubleshooting
 
-## Loading a checkpoint
+- `nvidia-smi: command not found` — NVIDIA driver is not installed; `setup.sh` falls back to the CPU wheel automatically.
+- `torch.cuda.is_available()` returns `False` on a GPU VM — check your driver version; re-run `setup.sh` (it is idempotent).
+- `make train-rl` fails with "No such file" — `training/rl_config.json` is missing.
 
-### Use `best.pt` as a playable bot
+---
+
+## Monitoring
+
+Training metrics are written as CSV files to `runs/<run_name>/<run_id>/metrics/`:
+
+```
+runs/<run_name>/<run_id>/metrics/
+  train_metrics.csv      # per-epoch: epoch, loss (IL) or per-iter: iteration, policy_loss, value_loss, entropy (RL)
+  val_metrics.csv        # per-epoch: epoch, loss (IL only)
+```
+
+Example: load and plot IL training curve:
 
 ```python
-from bots.neural.bot import NeuralBot
+import pandas as pd
+import matplotlib.pyplot as plt
 
-bot = NeuralBot.load("runs/neural_il/run_001/checkpoints/best.pt")
-# bot is a Bot subclass; wrap it with make_agent to get a callable agent_fn
-from bots.interface import make_agent
-agent_fn = make_agent(bot)
+train = pd.read_csv("runs/my_run/run_001/metrics/train_metrics.csv")
+val   = pd.read_csv("runs/my_run/run_001/metrics/val_metrics.csv")
+
+plt.plot(train["epoch"], train["loss"], label="train")
+plt.plot(val["epoch"],   val["loss"],   label="val")
+plt.legend()
+plt.show()
 ```
-
-### Play matches or tournaments with a trained checkpoint
-
-Any bot spec in `scripts/matches/config.json` or `scripts/tournament/config.json` that points to the neural bot can include a `?checkpoint=` suffix:
-
-```json
-{
-  "bot1": "bots.neural.bot:agent_fn?checkpoint=runs/neural_il/run_001/checkpoints/best.pt",
-  "bot2": "bots.heuristic.sniper:agent_fn"
-}
-```
-
-The checkpoint is loaded lazily on the first call (once per match session). Relative paths are resolved from the repository root. Without `?checkpoint=` the neural bot uses random weights.
-
-The same syntax works inside the tournament `bots` registry:
-
-```json
-"bots": {
-  "neural": "bots.neural.bot:agent_fn?checkpoint=runs/neural_il/run_001/checkpoints/best.pt",
-  "sniper":    "bots.heuristic.sniper:agent_fn"
-}
-```
-
-### Continue training from a checkpoint (`resume_from`)
-
-Set `resume_from` in `training/il_config.json` to load weights before training starts:
-
-```json
-{
-  "resume_from": "runs/neural_il/run_001/checkpoints/best.pt"
-}
-```
-
-The script prints a confirmation line and then trains normally. A new `run_id` is assigned automatically (`run_002`, `run_003`, …) so the original run is never overwritten. Set `resume_from` back to `null` to start from random weights again.
-
-### Run standalone evaluation against registered opponents
-
-```python
-from pathlib import Path
-from training.evaluation.evaluator import Evaluator
-
-evaluator = Evaluator.from_checkpoint(
-    checkpoint_path=Path("runs/neural_il/run_001/checkpoints/best.pt"),
-    opponents=["heuristic.baseline", "heuristic.proximity_conqueror"],
-    n_matches=20,
-)
-results = evaluator.run()
-```
-
-`Evaluator.from_checkpoint` accepts `checkpoint_path` (Path), `opponents` (list of registry key strings), and `n_matches` (int, default 10). It returns an `Evaluator` instance; call `.run()` to execute the matches.
-
-## Adding an opponent to the evaluator
-
-`OPPONENT_REGISTRY` in `training/evaluation/evaluator.py` lines 14-17 is the sole place to register new opponents. Add an entry with the format:
-
-```python
-OPPONENT_REGISTRY = {
-    "heuristic.baseline": "bots.heuristic.baseline:agent_fn",
-    "heuristic.proximity_conqueror": "bots.heuristic.proximity_conqueror:agent_fn",
-    "my_bot.name": "bots.my_bot:agent_fn",   # new entry
-}
-```
-
-The key is the string used in `eval_opponents` inside `il_config.json`. The value is a `module.path:attribute` string that `load_agent` resolves via `importlib`.
-
-## RL note
-
-`RLTrainer` exists as a placeholder class in `training/trainers/`. The checkpoint format, `CheckpointManager`, and `Evaluator` are already designed to be reusable for an RL training loop without changes. What remains to implement RL fine-tuning is: (1) `OrbitWarsEnv.step()` — the Gym-style step function that applies an action and returns the next observation and reward; and (2) a policy-gradient loop (e.g. PPO or REINFORCE) that calls `step()`, accumulates returns, and updates the model. See `training/trainers/il_trainer.py` as a reference for how the existing trainer hooks fit together.
