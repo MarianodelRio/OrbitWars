@@ -1,5 +1,5 @@
 {
-  "run_name": "rl_ppo_v1",
+  "run_name": "rl_ppo_v2",
   "run_id": "",
   "device": "auto",
   "seed": 42,
@@ -37,8 +37,18 @@
   "w_planets": 1.0,
   "w_production": 0.5,
   "w_ships": 0.1,
-  "reward_lambda": 0.05,
+  "reward_lambda": 0.1,
   "reward_clip_abs": 0.2,
+  "r_terminal_win": 10.0,
+  "r_terminal_loss": -10.0,
+  "r_terminal_margin_coef": 5.0,
+  "r_event_capture_enemy": 0.5,
+  "r_event_capture_comet": 0.2,
+  "r_event_eliminate_opponent": 1.0,
+  "r_event_lose_planet": -0.3,
+  "r_event_ships_wasted_coef": 0.0,
+  "r_explore": 0.01,
+  "explore_iterations": 200,
 
   "heuristic_opponents": [
     "bots.heuristic.baseline:agent_fn",

@@ -20,6 +20,7 @@ class PPOLossResult:
     approx_kl: float
     clip_fraction: float
     explained_variance: float
+    kl_bc: float = 0.0
 
 
 def _batched_log_prob_and_entropy(
@@ -85,18 +86,20 @@ def _batched_log_prob_and_entropy(
     log_prob = log_prob + (tgt_lp * is_launch.float()).sum(-1)
     log_prob = log_prob + (amt_lp * is_launch.float()).sum(-1)
 
-    # entropy per item
-    entropy = (at_entropy * is_my_planet.float()).sum(-1)
-    entropy = entropy + (tgt_entropy * is_launch.float()).sum(-1)
-    entropy = entropy + (amt_entropy * is_launch.float()).sum(-1)
+    # per-head entropy sums per item
+    at_entropy_sum = (at_entropy * is_my_planet.float()).sum(-1)   # (B,)
+    tgt_entropy_sum = (tgt_entropy * is_launch.float()).sum(-1)    # (B,)
+    amt_entropy_sum = (amt_entropy * is_launch.float()).sum(-1)    # (B,)
 
-    return log_prob, entropy  # each (B,)
+    return log_prob, at_entropy_sum, tgt_entropy_sum, amt_entropy_sum  # each (B,)
 
 
 def compute_ppo_loss(
     model: PlanetPolicyModel,
     batch: dict,
     config,
+    bc_model=None,
+    kl_bc_coef: float = 0.0,
 ) -> tuple[torch.Tensor, PPOLossResult]:
     """Compute PPO loss for a batch. Returns (total_loss_tensor, PPOLossResult)."""
     device = next(model.parameters()).device
@@ -122,10 +125,10 @@ def compute_ppo_loss(
         advantage = (advantage - advantage.mean()) / (advantage.std() + 1e-8)
 
     # Forward pass
-    output = model(planet_features, fleet_features, fleet_mask, global_features, planet_mask)
+    output, _ = model(planet_features, fleet_features, fleet_mask, global_features, planet_mask, batch["relational_tensor"])
 
-    # Batched log-prob and entropy
-    new_log_prob, entropy_per_item = _batched_log_prob_and_entropy(
+    # Batched log-prob and per-head entropy
+    new_log_prob, at_ent, tgt_ent, amt_ent = _batched_log_prob_and_entropy(
         output=output,
         my_planet_mask=my_planet_mask,
         valid_target_mask=valid_target_mask,
@@ -141,17 +144,68 @@ def compute_ppo_loss(
     policy_loss = -torch.min(surr1, surr2).mean()
 
     # Value loss (clipped)
-    value_pred = output.value.squeeze(-1).squeeze(-1)  # (B,)
+    value_pred = output.v_shaped.squeeze(-1).squeeze(-1)  # (B,)
     v_clipped = value_old + torch.clamp(value_pred - value_old, -config.clip_eps, config.clip_eps)
     value_loss = 0.5 * torch.max(
         (value_pred - ret) ** 2,
         (v_clipped - ret) ** 2,
     ).mean()
 
-    # Entropy bonus
-    entropy_loss = -entropy_per_item.mean()
+    # Per-head weighted entropy bonus
+    entropy_bonus = (
+        config.entropy_coef_action_type * at_ent.mean()
+        + config.entropy_coef_target * tgt_ent.mean()
+        + config.entropy_coef_amount * amt_ent.mean()
+    )
+    entropy_for_log = (at_ent + tgt_ent + amt_ent).mean()
 
-    total_loss = policy_loss + config.vf_coef * value_loss + config.ent_coef * entropy_loss
+    total_loss = policy_loss + config.vf_coef * value_loss - entropy_bonus
+
+    # KL-to-BC regularization
+    kl_bc_val = 0.0
+    if bc_model is not None and kl_bc_coef > 0.0:
+        is_my_planet = my_planet_mask           # (B, P)
+        is_launch = (action_types == 1) & is_my_planet  # (B, P)
+
+        with torch.no_grad():
+            bc_out, _ = bc_model(
+                planet_features, fleet_features, fleet_mask,
+                global_features, planet_mask,
+                batch["relational_tensor"], None
+            )
+
+        # KL for action_type head
+        kl_at = F.kl_div(
+            F.log_softmax(output.action_type_logits, dim=-1),
+            F.softmax(bc_out.action_type_logits, dim=-1),
+            reduction="none",
+        ).sum(-1)  # (B, P)
+        kl_at = (kl_at * is_my_planet.float()).sum() / is_my_planet.float().sum().clamp(min=1)
+
+        # KL for target head (apply valid_target_mask before softmax)
+        tgt_logits = output.target_logits.clone()
+        bc_tgt_logits = bc_out.target_logits.clone()
+        if "valid_target_mask" in batch:
+            tgt_logits = tgt_logits.masked_fill(~batch["valid_target_mask"], float("-inf"))
+            bc_tgt_logits = bc_tgt_logits.masked_fill(~batch["valid_target_mask"], float("-inf"))
+        kl_tgt = F.kl_div(
+            F.log_softmax(tgt_logits, dim=-1),
+            F.softmax(bc_tgt_logits, dim=-1),
+            reduction="none",
+        ).sum(-1)  # (B, P)
+        kl_tgt = (kl_tgt * is_launch.float()).sum() / is_launch.float().sum().clamp(min=1)
+
+        # KL for amount head
+        kl_amt = F.kl_div(
+            F.log_softmax(output.amount_logits, dim=-1),
+            F.softmax(bc_out.amount_logits, dim=-1),
+            reduction="none",
+        ).sum(-1)  # (B, P)
+        kl_amt = (kl_amt * is_launch.float()).sum() / is_launch.float().sum().clamp(min=1)
+
+        kl_bc_total = kl_at + kl_tgt + kl_amt
+        total_loss = total_loss + kl_bc_coef * kl_bc_total
+        kl_bc_val = kl_bc_total.item()
 
     # Diagnostics (detached)
     with torch.no_grad():
@@ -168,10 +222,11 @@ def compute_ppo_loss(
         total_loss=total_loss.item(),
         policy_loss=policy_loss.item(),
         value_loss=value_loss.item(),
-        entropy=(-entropy_loss).item(),
+        entropy=entropy_for_log.item(),
         approx_kl=approx_kl,
         clip_fraction=clip_fraction,
         explained_variance=explained_variance,
+        kl_bc=kl_bc_val,
     )
 
     return total_loss, result

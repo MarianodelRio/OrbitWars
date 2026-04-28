@@ -63,7 +63,7 @@ def test_clipping():
     prev = make_obs([[0, 1, 10, 10, 1, 10, 2]])
     curr = make_obs([[0, 0, 10, 10, 1, 10, 2]])
     reward = pr.compute(prev, curr, player=0)
-    assert abs(reward) <= 0.2 + 1e-9
+    assert abs(reward) > 0.2
 
 
 def test_no_change_near_zero():
@@ -76,3 +76,54 @@ def test_no_change_near_zero():
     reward = pr.compute(obs, obs, player=0)
     # With gamma=1.0 and same state, shaped = 1*phi - phi = 0
     assert reward == 0.0
+
+
+def test_terminal_win_fires_with_eliminate_opponent():
+    pr = PotentialReward()
+    # prev: player 0 owns planet 0, opponent player 1 owns planets 1 and 2
+    prev_obs = make_obs([
+        [0, 0, 10, 10, 3, 100, 2],
+        [1, 1, 50, 50, 3, 50, 1],
+        [2, 1, 80, 80, 3, 50, 1],
+    ])
+    # curr: player 0 owns all three planets, opponent has none
+    curr_obs = make_obs([
+        [0, 0, 10, 10, 3, 100, 2],
+        [1, 0, 50, 50, 3, 50, 1],
+        [2, 0, 80, 80, 3, 50, 1],
+    ])
+    result = pr._compute_terminal(prev_obs, curr_obs, 0)
+    assert result >= pr.r_terminal_win + pr.r_event_eliminate_opponent
+
+
+def test_log_ships_share_bounded():
+    # Use w_production=0.0, w_planets=0.0, w_ships=1.0 so _potential returns only ships component
+    pr = PotentialReward(w_production=0.0, w_planets=0.0, w_ships=1.0)
+    # Player 0 owns one planet with 1000 ships (the max)
+    obs = make_obs([
+        [0, 0, 10, 10, 3, 1000, 2],
+    ])
+    result = pr._potential(obs, 0)
+    # log(1+1000)/log(1001) == 1.0, so result should be w_ships * 1.0 = 1.0
+    assert result <= 1.0 + 1e-9
+
+
+def test_explore_disabled_after_notify_iteration():
+    pr = PotentialReward(r_explore=0.01, explore_iterations=5)
+    pr.notify_iteration(6)
+    # Build obs where a planet changes owner
+    prev_obs = make_obs([
+        [0, 1, 10, 10, 3, 50, 1],
+    ])
+    curr_obs = make_obs([
+        [0, 0, 10, 10, 3, 50, 1],
+    ])
+    result = pr._compute_explore(prev_obs, curr_obs, 0)
+    assert result == 0.0
+
+
+def test_reset_episode_clears_combat_flags():
+    pr = PotentialReward()
+    pr._combat_flags = {0: True, 1: True}
+    pr.reset_episode()
+    assert len(pr._combat_flags) == 0

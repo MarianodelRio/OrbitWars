@@ -6,14 +6,17 @@ import numpy as np
 
 from .types import ActionContext, PerPlanetLabels
 
+BINS = [0.05, 0.1, 0.2, 0.3, 0.5, 0.7, 0.85, 1.0]  # indices 0-7
+MIN_CAPTURE_BIN = 8  # sentinel bin: send exactly min_to_capture ships
+
 
 class ActionCodec:
     NO_OP = 0
     LAUNCH = 1
 
-    def __init__(self, n_amount_bins: int = 5, angular_diff_threshold: float = math.pi / 4) -> None:
+    def __init__(self, n_amount_bins: int = 9, angular_diff_threshold: float = math.pi / 4) -> None:
         self.n_amount_bins = n_amount_bins
-        self.BINS = [0.1, 0.25, 0.5, 0.75, 1.0]
+        self.BINS = BINS
         self.angular_diff_threshold = angular_diff_threshold
 
     def encode_per_planet(
@@ -110,6 +113,7 @@ class ActionCodec:
         context: ActionContext,
         planets: np.ndarray,
         max_planets: int,
+        angular_velocity: float = 0.0,
     ) -> list:
         """Decode PlanetPolicyOutput into a list of game actions.
 
@@ -119,9 +123,6 @@ class ActionCodec:
         max_planets: size of the padded planet dimension
         Returns: list of [planet_id, angle, n_ships] actions
         """
-        # Import here to avoid circular import
-        from .planet_policy_model import PlanetPolicyOutput  # noqa: F401
-
         if context.n_planets == 0:
             return []
 
@@ -167,19 +168,48 @@ class ActionCodec:
             target_idx = int(np.argmax(target_logits_i))
 
             amount_bin = int(np.argmax(amount_logits[i]))
-            amount_bin = int(np.clip(amount_bin, 0, len(self.BINS) - 1))
+            amount_bin = int(np.clip(amount_bin, 0, len(self.BINS)))
 
             # Reverse normalization: col 5 in planet_features is ships/200
             source_ships = float(planets[i, 5]) * 200.0
-            n_ships = self.BINS[amount_bin] * source_ships
+
+            if amount_bin == MIN_CAPTURE_BIN:
+                # Fallback: send all ships as approximation for min-to-capture
+                n_ships = source_ships
+            else:
+                fraction = self.BINS[amount_bin]
+                n_ships = fraction * source_ships
             if n_ships < 1.0:
                 continue
 
             source_pos = context.planet_positions[i]
             target_pos = context.planet_positions[target_idx]
+
+            # Compute flight time estimate for orbital position adjustment
+            dx0 = float(target_pos[0]) - float(source_pos[0])
+            dy0 = float(target_pos[1]) - float(source_pos[1])
+            distance = math.sqrt(dx0 * dx0 + dy0 * dy0)
+            speed = 1.0  # fleet speed (normalised units; adjust if known)
+            eta_turns = distance / speed if speed > 0 else 0.0
+
+            # Advance orbital target position
+            target_angle_base = math.atan2(float(target_pos[1]), float(target_pos[0]))
+            adjusted_target_angle = target_angle_base + eta_turns * angular_velocity
+            if angular_velocity != 0.0:
+                orbit_radius = math.sqrt(float(target_pos[0]) ** 2 + float(target_pos[1]) ** 2)
+                if orbit_radius > 0:
+                    target_x = orbit_radius * math.cos(adjusted_target_angle)
+                    target_y = orbit_radius * math.sin(adjusted_target_angle)
+                else:
+                    target_x = float(target_pos[0])
+                    target_y = float(target_pos[1])
+            else:
+                target_x = float(target_pos[0])
+                target_y = float(target_pos[1])
+
             angle = math.atan2(
-                float(target_pos[1]) - float(source_pos[1]),
-                float(target_pos[0]) - float(source_pos[0]),
+                target_y - float(source_pos[1]),
+                target_x - float(source_pos[0]),
             )
 
             actions.append([int(context.planet_ids[i]), angle, n_ships])

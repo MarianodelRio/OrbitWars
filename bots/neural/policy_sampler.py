@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
 
 import numpy as np
@@ -11,6 +10,7 @@ from torch.distributions import Categorical
 
 from .planet_policy_model import PlanetPolicyOutput
 from .types import ActionContext
+from .action_codec import MIN_CAPTURE_BIN
 
 NO_OP = 0
 LAUNCH = 1
@@ -85,47 +85,51 @@ class PolicySampler:
         log_prob = torch.tensor(0.0, dtype=torch.float32)
         entropy = torch.tensor(0.0, dtype=torch.float32)
 
-        # output has shapes (max_planets, 2), (max_planets, max_planets), (max_planets, 5), (1,) or (1,1)
-        for i in range(P):
-            if not rl_masks.my_planet_mask[i]:
-                continue
+        mask_np = rl_masks.my_planet_mask.cpu().numpy().astype(bool)  # (P,)
+        active_idxs = np.where(mask_np)[0]  # integer indices of my planets
+        mask_tensor = rl_masks.my_planet_mask  # bool tensor (P,)
 
-            at_logits = output.action_type_logits[i]  # (2,)
+        # Vectorized action-type sampling
+        if active_idxs.size > 0:
+            at_logits = output.action_type_logits[mask_tensor]  # (n_active, n_at)
             at_dist = Categorical(logits=at_logits)
             if deterministic:
-                at = int(at_logits.argmax().item())
+                at_samples = at_logits.argmax(dim=-1)
             else:
-                at = int(at_dist.sample().item())
+                at_samples = at_dist.sample()
+            log_prob = log_prob + at_dist.log_prob(at_samples).sum()
+            entropy = entropy + at_dist.entropy().sum()
+            action_types[active_idxs] = at_samples.cpu().numpy().astype(np.int8)
 
-            action_types[i] = at
-            log_prob = log_prob + at_dist.log_prob(torch.tensor(at, dtype=torch.long))
-            entropy = entropy + at_dist.entropy()
+        # Compute LAUNCH mask
+        launch_mask_np = (action_types == LAUNCH)  # (P,) bool numpy
+        launch_idxs = np.where(launch_mask_np)[0]
+        launch_idxs_tensor = torch.from_numpy(launch_idxs).long().to(output.action_type_logits.device)
 
-            if at == LAUNCH:
-                tgt_logits = output.target_logits[i].clone()  # (max_planets,)
-                mask = rl_masks.valid_target_mask[i]  # (max_planets,)
-                tgt_logits[~mask] = float("-inf")
+        # Vectorized target and amount sampling
+        if launch_idxs.size > 0:
+            tgt_logits = output.target_logits[launch_idxs_tensor].clone()  # (n_launch, P)
+            valid_tgt = rl_masks.valid_target_mask[launch_idxs_tensor]     # (n_launch, P)
+            tgt_logits[~valid_tgt] = float("-inf")
+            tgt_dist = Categorical(logits=tgt_logits)
+            if deterministic:
+                tgt_samples = tgt_logits.argmax(dim=-1)
+            else:
+                tgt_samples = tgt_dist.sample()
+            log_prob = log_prob + tgt_dist.log_prob(tgt_samples).sum()
+            entropy = entropy + tgt_dist.entropy().sum()
+            target_idxs[launch_idxs] = tgt_samples.cpu().numpy().astype(np.int64)
 
-                tgt_dist = Categorical(logits=tgt_logits)
-                if deterministic:
-                    tgt = int(tgt_logits.argmax().item())
-                else:
-                    tgt = int(tgt_dist.sample().item())
-
-                target_idxs[i] = tgt
-                log_prob = log_prob + tgt_dist.log_prob(torch.tensor(tgt, dtype=torch.long))
-                entropy = entropy + tgt_dist.entropy()
-
-                amt_logits = output.amount_logits[i]  # (n_bins,)
-                amt_dist = Categorical(logits=amt_logits)
-                if deterministic:
-                    amt = int(amt_logits.argmax().item())
-                else:
-                    amt = int(amt_dist.sample().item())
-
-                amount_bins[i] = amt
-                log_prob = log_prob + amt_dist.log_prob(torch.tensor(amt, dtype=torch.long))
-                entropy = entropy + amt_dist.entropy()
+            # Amount
+            amt_logits = output.amount_logits[launch_idxs_tensor]  # (n_launch, n_bins)
+            amt_dist = Categorical(logits=amt_logits)
+            if deterministic:
+                amt_samples = amt_logits.argmax(dim=-1)
+            else:
+                amt_samples = amt_dist.sample()
+            log_prob = log_prob + amt_dist.log_prob(amt_samples).sum()
+            entropy = entropy + amt_dist.entropy().sum()
+            amount_bins[launch_idxs] = amt_samples.cpu().numpy().astype(np.int64)
 
         canonical = CanonicalAction(
             action_types=action_types,
@@ -133,31 +137,45 @@ class PolicySampler:
             amount_bins=amount_bins,
         )
 
-        # Build game actions
+        # Build game actions (vectorized)
         game_actions = []
-        for i in range(P):
-            if action_types[i] != LAUNCH:
-                continue
-            tgt = int(target_idxs[i])
-            if tgt < 0 or tgt >= context.n_planets:
-                continue
-            amt = int(amount_bins[i])
-            if amt < 0 or amt >= len(self.bins):
-                continue
-            source_ships = float(planet_features[i, 5]) * 200.0
-            n_ships = self.bins[amt] * source_ships
-            if n_ships < 1.0:
-                continue
-            source_pos = context.planet_positions[i]
-            target_pos = context.planet_positions[tgt]
-            angle = math.atan2(
-                float(target_pos[1]) - float(source_pos[1]),
-                float(target_pos[0]) - float(source_pos[0]),
+        if launch_idxs.size > 0:
+            bins_arr = np.array(self.bins)  # shape (8,), indices 0-7
+            safe_amt = np.maximum(0, amount_bins).astype(np.int64)
+            safe_amt_clipped = np.minimum(safe_amt, len(bins_arr) - 1)  # clip to 0-7 for indexing
+
+            source_ships_arr = planet_features[:, 5] * 200.0  # (P,)
+            fractions = bins_arr[safe_amt_clipped]             # (P,)
+            n_ships_arr = np.where(
+                amount_bins == MIN_CAPTURE_BIN,
+                source_ships_arr,
+                fractions * source_ships_arr,
             )
-            game_actions.append([int(context.planet_ids[i]), angle, n_ships])
+
+            # Combined validity mask
+            build_mask = (
+                launch_mask_np
+                & (target_idxs >= 0)
+                & (target_idxs < context.n_planets)
+                & (amount_bins >= 0)
+                & (amount_bins <= MIN_CAPTURE_BIN)
+                & (n_ships_arr >= 1.0)
+            )
+            build_idxs = np.where(build_mask)[0]
+
+            if build_idxs.size > 0:
+                src_pos = np.array([context.planet_positions[i] for i in build_idxs])
+                tgt_pos = np.array([context.planet_positions[target_idxs[i]] for i in build_idxs])
+                angles = np.arctan2(tgt_pos[:, 1] - src_pos[:, 1], tgt_pos[:, 0] - src_pos[:, 0])
+                for k, i in enumerate(build_idxs):
+                    game_actions.append([
+                        int(context.planet_ids[i]),
+                        float(angles[k]),
+                        float(n_ships_arr[i]),
+                    ])
 
         # Value: handle (1,) or (1,1)
-        value = output.value.view(-1)[0]
+        value = output.v_outcome.view(-1)[0]
 
         return SampleResult(
             canonical=canonical,

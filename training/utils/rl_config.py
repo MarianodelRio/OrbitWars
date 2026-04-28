@@ -35,8 +35,18 @@ class RLConfig:
     w_planets: float = 1.0
     w_production: float = 0.5
     w_ships: float = 0.1
-    reward_lambda: float = 0.05
+    reward_lambda: float = 0.1
     reward_clip_abs: float = 0.2
+    r_terminal_win: float = 10.0
+    r_terminal_loss: float = -10.0
+    r_terminal_margin_coef: float = 5.0
+    r_event_capture_enemy: float = 0.5
+    r_event_capture_comet: float = 0.2
+    r_event_eliminate_opponent: float = 1.0
+    r_event_lose_planet: float = -0.3
+    r_event_ships_wasted_coef: float = 0.0
+    r_explore: float = 0.01
+    explore_iterations: int = 200
 
     # Opponent pool
     max_snapshots: int = 5
@@ -69,6 +79,19 @@ class RLConfig:
 
     # Model config (optional dict for building PlanetPolicyModel)
     model_config: dict = field(default_factory=dict)
+
+    # KL-to-BC regularization
+    bc_policy_path: str = ""
+    kl_bc_coef_start: float = 1.0
+    kl_bc_coef_end: float = 0.1
+    kl_bc_coef_decay_iters: int = 500
+    # IL distillation
+    il_distill_ratio: float = 0.1
+    il_data_cache_path: str = ""
+    # Asymmetric entropy coefficients (replaces ent_coef in ppo.py — ent_coef kept for backward compat)
+    entropy_coef_action_type: float = 0.02
+    entropy_coef_target: float = 0.005
+    entropy_coef_amount: float = 0.005
 
     @classmethod
     def from_json(cls, path: Path) -> "RLConfig":

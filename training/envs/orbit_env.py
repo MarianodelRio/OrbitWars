@@ -37,6 +37,8 @@ class OrbitWarsEnv:
         # Do NOT use raw_obs["player"] — it is always 0 after reset.
         self._prev_obs = raw_obs
         self._step_count = 0
+        if hasattr(self._reward_fn, "reset_episode"):
+            self._reward_fn.reset_episode()
 
         state = self._state_builder.from_obs(raw_obs, self._player)
         return state, {

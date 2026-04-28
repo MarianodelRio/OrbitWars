@@ -45,17 +45,17 @@ def _obs(n_planets=5, n_fleets=8, player=0, step=100, comet_ids=None):
 
 def test_planet_features_shape():
     state = _builder().from_obs(_obs(), player=0)
-    assert state["planet_features"].shape == (MAX_PLANETS, 10)
+    assert state["planet_features"].shape == (MAX_PLANETS, 24)
 
 
 def test_fleet_features_shape():
     state = _builder().from_obs(_obs(), player=0)
-    assert state["fleet_features"].shape == (MAX_FLEETS, 8)
+    assert state["fleet_features"].shape == (MAX_FLEETS, 16)
 
 
 def test_global_features_shape():
     state = _builder().from_obs(_obs(), player=0)
-    assert state["global_features"].shape == (4,)
+    assert state["global_features"].shape == (16,)
 
 
 def test_planet_mask_shape():
@@ -155,14 +155,14 @@ def test_ships_normalized_by_200():
     obs = _obs(n_planets=2, player=0)
     obs["planets"][0][5] = 100.0  # set ships to 100
     state = _builder().from_obs(obs, player=0)
-    assert state["planet_features"][0, 5] == pytest.approx(0.5)
+    assert state["planet_features"][0, 5] == pytest.approx(math.log(101.0) / math.log(1001.0), abs=1e-5)
 
 
-def test_ships_clipped_at_one():
+def test_ships_log_normalized():
     obs = _obs(n_planets=2, player=0)
-    obs["planets"][0][5] = 500.0  # > 200 → clipped
+    obs["planets"][0][5] = 500.0
     state = _builder().from_obs(obs, player=0)
-    assert state["planet_features"][0, 5] == pytest.approx(1.0)
+    assert state["planet_features"][0, 5] == pytest.approx(math.log(501.0) / math.log(1001.0), abs=1e-5)
 
 
 def test_position_normalized_by_100():
@@ -233,13 +233,13 @@ def test_padding_fleet_slots_are_zero():
 def test_empty_planets_does_not_crash():
     obs = {"planets": [], "fleets": [], "comet_planet_ids": [], "step": 0, "player": 0}
     state = _builder().from_obs(obs, player=0)
-    assert state["planet_features"].shape == (MAX_PLANETS, 10)
+    assert state["planet_features"].shape == (MAX_PLANETS, 24)
     assert int(state["planet_mask"].sum()) == 0
 
 
 def test_empty_fleets_does_not_crash():
     state = _builder().from_obs(_obs(n_fleets=0), player=0)
-    assert state["fleet_features"].shape == (MAX_FLEETS, 8)
+    assert state["fleet_features"].shape == (MAX_FLEETS, 16)
     assert int(state["fleet_mask"].sum()) == 0
 
 
@@ -269,3 +269,22 @@ def test_from_obs_structured_same_as_from_obs():
     s2 = builder.from_obs_structured(obs, player=0)
     assert np.array_equal(s1["planet_features"], s2["planet_features"])
     assert np.array_equal(s1["planet_mask"], s2["planet_mask"])
+
+
+# ---------------------------------------------------------------------------
+# Relational tensor tests
+# ---------------------------------------------------------------------------
+
+builder = _builder()
+
+
+@pytest.fixture
+def make_obs():
+    return _obs
+
+
+def test_relational_tensor_shape(make_obs):
+    obs = make_obs()
+    state = builder.from_obs(obs, player=0)
+    assert state["relational_tensor"].shape == (MAX_PLANETS, MAX_PLANETS, 4)
+    assert state["relational_tensor"].dtype == np.float32

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass, field
+from typing import Optional
 
 import numpy as np
 import torch
@@ -24,6 +25,8 @@ class RolloutStep:
     step_count: int
     advantage: float = 0.0
     ret: float = 0.0
+    h_n: Optional[torch.Tensor] = None   # (1, 1, G) hidden state before this step
+    c_n: Optional[torch.Tensor] = None   # (1, 1, G) cell state before this step
 
 
 class RolloutBuffer:
@@ -103,6 +106,11 @@ class RolloutBuffer:
                 dtype=torch.float32,
                 device=device,
             )
+            relational_tensor = torch.tensor(
+                np.stack([s.state["relational_tensor"] for s in batch_steps]),
+                dtype=torch.float32,
+                device=device,
+            )
 
             # RLMasks — each is a tensor
             my_planet_mask = torch.stack([s.rl_masks.my_planet_mask.cpu() for s in batch_steps]).to(device)
@@ -151,6 +159,7 @@ class RolloutBuffer:
                 "fleet_mask": fleet_mask,
                 "planet_mask": planet_mask,
                 "global_features": global_features,
+                "relational_tensor": relational_tensor,
                 "my_planet_mask": my_planet_mask,
                 "valid_target_mask": valid_target_mask,
                 "action_types": action_types,

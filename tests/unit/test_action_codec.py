@@ -151,7 +151,7 @@ def test_launch_action_amount_bin_in_range():
     labels = codec.encode_per_planet(raw_actions, ctx, planets, 1.0, MAX_PLANETS)
 
     assert labels.planet_action_types[0] == ActionCodec.LAUNCH
-    assert 0 <= labels.planet_amount_bins[0] <= 4
+    assert 0 <= labels.planet_amount_bins[0] <= 7
 
 
 def test_ambiguous_target_marked_minus_one():
@@ -182,7 +182,7 @@ def test_amount_bin_half_ships():
     labels = codec.encode_per_planet(raw_actions, ctx, planets, 1.0, MAX_PLANETS)
 
     assert labels.planet_action_types[0] == ActionCodec.LAUNCH
-    assert labels.planet_amount_bins[0] == 2  # closest bin to 0.5
+    assert labels.planet_amount_bins[0] == 4  # closest bin to 0.5
 
 
 def test_my_planet_mask_matches_context():
@@ -247,7 +247,7 @@ def _make_output(n_planets=MAX_PLANETS, all_noop=False, launch_planet=0, target_
     tgt = np.zeros((n_planets, n_planets), dtype=np.float32)
     tgt[launch_planet, target_planet] = 100.0
 
-    amt = np.zeros((n_planets, 5), dtype=np.float32)
+    amt = np.zeros((n_planets, 9), dtype=np.float32)
     amt[launch_planet, amount_bin] = 100.0
 
     return _FakeOutput(at, tgt, amt)

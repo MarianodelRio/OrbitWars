@@ -34,12 +34,14 @@ def make_output(max_planets=10):
     pm = torch.zeros(1, max_planets, dtype=torch.bool)
     pm[0, :3] = True
     with torch.no_grad():
-        out_batched = model(pf, ff, fm, gf, pm)
+        out_batched, _ = model(pf, ff, fm, gf, pm)
     output = PlanetPolicyOutput(
         action_type_logits=out_batched.action_type_logits.squeeze(0),
         target_logits=out_batched.target_logits.squeeze(0),
         amount_logits=out_batched.amount_logits.squeeze(0),
-        value=out_batched.value,
+        v_outcome=out_batched.v_outcome.squeeze(0),
+        v_score_diff=out_batched.v_score_diff.squeeze(0),
+        v_shaped=out_batched.v_shaped.squeeze(0),
     )
     return output
 

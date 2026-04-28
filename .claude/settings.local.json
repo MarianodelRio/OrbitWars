@@ -6,7 +6,11 @@
       "Bash(git -C \"c:/Users/mariano.del.rio/OrbitWars\" diff HEAD -- Makefile requirements.txt setup.sh SETUP_GPU.md)",
       "Bash(xxd /c/Users/mariano.del.rio/OrbitWars/Makefile)",
       "Bash(bash -n /c/Users/mariano.del.rio/OrbitWars/setup.sh)",
-      "WebSearch"
+      "WebSearch",
+      "Bash(.venv/Scripts/python -m pytest tests/unit/rl/test_potential_reward.py -v)",
+      "Bash(git -C \"c:/Users/mariano.del.rio/OrbitWars\" diff --name-only HEAD)",
+      "Bash(git -C \"c:/Users/mariano.del.rio/OrbitWars\" stash list)",
+      "Bash(python -c \"import torch; print\\(torch.__version__\\)\")"
     ]
   }
 }

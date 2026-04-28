@@ -24,6 +24,7 @@ class NeuralBot(Bot):
         self.device = device
         self.model.to(device)
         self.model.eval()
+        self._hidden = None
 
     @property
     def name(self) -> str:
@@ -45,16 +46,23 @@ class NeuralBot(Bot):
         fm = torch.tensor(state["fleet_mask"], dtype=torch.bool).unsqueeze(0).to(self.device)
         gf = torch.tensor(state["global_features"], dtype=torch.float32).unsqueeze(0).to(self.device)
         pm = torch.tensor(state["planet_mask"], dtype=torch.bool).unsqueeze(0).to(self.device)
+        rt = torch.tensor(state["relational_tensor"], dtype=torch.float32).unsqueeze(0).to(self.device)
         with torch.no_grad():
-            output = self.model(pf, ff, fm, gf, pm)
+            output, self._hidden = self.model(pf, ff, fm, gf, pm, rt, self._hidden)
         squeezed = PlanetPolicyOutput(
             action_type_logits=output.action_type_logits.squeeze(0),
             target_logits=output.target_logits.squeeze(0),
             amount_logits=output.amount_logits.squeeze(0),
-            value=output.value,
+            v_outcome=output.v_outcome.squeeze(0),
+            v_score_diff=output.v_score_diff.squeeze(0),
+            v_shaped=output.v_shaped.squeeze(0),
         )
         planets_arr = state["planet_features"]
         return self.codec.decode_per_planet(squeezed, state["context"], planets_arr, self.model.config.max_planets)
+
+    def reset(self) -> None:
+        """Reset episode-level LSTM hidden state."""
+        self._hidden = None
 
     @classmethod
     def load(cls, path: str, device: str = "cpu") -> "NeuralBot":
@@ -78,7 +86,9 @@ class NeuralBot(Bot):
                 max_fleets=config_dict["max_fleets"],
                 n_amount_bins=config_dict["n_amount_bins"],
                 dropout=config_dict["dropout"],
-                n_attn_heads=config_dict["n_attn_heads"],
+                n_heads=config_dict.get("n_heads", config_dict.get("n_attn_heads", 8)),
+                n_layers=config_dict.get("n_layers", 4),
+                ffn_hidden=config_dict.get("ffn_hidden", 768),
             )
             model = PlanetPolicyModel(config)
             model.load_state_dict(checkpoint["state_dict"])
