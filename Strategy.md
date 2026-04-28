@@ -2,38 +2,6 @@
 
 **Objetivo:** pasar de cero datos a un bot neural competitivo en Kaggle. Este documento se lee una vez y se ejecuta en orden. Cada sección tiene comandos exactos.
 
----
-
-## 0. Estado de fixes (actualizado 2026-04-28)
-
-Los bugs originales han sido corregidos en el pull más reciente. Estado:
-
-### ~~Bug 1~~ — CORREGIDO
-`train.py` ya pasa `n_layers`, `ffn_hidden`, `lstm_bypass` en ambos bloques (RL líneas 87–89, IL líneas 153–155).
-
-### ~~Bug 2~~ — CORREGIDO
-`PotentialReward._potential()` ya incluye naves en flotas: `my_ships += sum(f[6] for f in obs.get("fleets", []) if f[1] == player)` ([training/rewards/potential.py:66](training/rewards/potential.py#L66)).
-
-### ~~Bug 3~~ — CORREGIDO
-`RLTrainer` ya trackea `self._best_mean_winrate` y llama a `save_rl_checkpoint(..., is_best_winrate=True)` cuando se supera ([training/trainers/rl_trainer.py:438-457](training/trainers/rl_trainer.py#L438)).
-
-### Bug 4 — PARCIALMENTE PENDIENTE
-`make train` y `make train-rl` siguen llamando a `scripts/train_il.py` y `scripts/train_rl.py` respectivamente. Los demás targets (`train-bg`, `train-phase1/2/3`, `pipeline`) ya usan `train.py`. Impacto bajo — los scripts legados funcionan — pero inconsistente. Cuando convenga:
-```makefile
-train:
-	$(PYTHON) train.py --config training/il_config.json
-
-train-rl:
-	$(PYTHON) train.py --config $(CONFIG)
-```
-
-### Verificar el estado actual
-```bash
-make test-quick
-python train.py --config training/rl_phase1.json --dry-run
-```
-
----
 
 ## 1. Setup del entorno GPU (GCP)
 
