@@ -124,8 +124,8 @@ def compute_ppo_loss(
     if config.normalize_advantages:
         advantage = (advantage - advantage.mean()) / (advantage.std() + 1e-8)
 
-    # Forward pass
-    output, _ = model(planet_features, fleet_features, fleet_mask, global_features, planet_mask, batch["relational_tensor"])
+    # Forward pass (relational_tensor=None: rel_proj not trained in IL, see tech-debt note)
+    output, _ = model(planet_features, fleet_features, fleet_mask, global_features, planet_mask, None)
 
     # Batched log-prob and per-head entropy
     new_log_prob, at_ent, tgt_ent, amt_ent = _batched_log_prob_and_entropy(
@@ -171,7 +171,7 @@ def compute_ppo_loss(
             bc_out, _ = bc_model(
                 planet_features, fleet_features, fleet_mask,
                 global_features, planet_mask,
-                batch["relational_tensor"], None
+                None, None
             )
 
         # KL for action_type head

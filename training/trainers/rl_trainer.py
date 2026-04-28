@@ -184,12 +184,11 @@ class RLTrainer:
 
             rl_masks = sampler.build_masks(state["context"], device=device)
 
-            rt = torch.tensor(
-                state["relational_tensor"], dtype=torch.float32
-            ).unsqueeze(0).to(device)
-
             with torch.no_grad():
-                output, new_hidden = self.model(pf, ff, fm, gf, pm, rt, hidden)
+                # relational_tensor not passed: rel_proj was never trained during IL
+                # (not in HDF5 cache), so its random weights cause NaN. Pass None
+                # to use the same code path as IL. (tracked as technical debt — fix: Option B)
+                output, new_hidden = self.model(pf, ff, fm, gf, pm, None, hidden)
                 output_squeezed = PlanetPolicyOutput(
                     action_type_logits=output.action_type_logits.squeeze(0),
                     target_logits=output.target_logits.squeeze(0),
@@ -257,11 +256,8 @@ class RLTrainer:
             fm = torch.tensor(state["fleet_mask"], dtype=torch.bool).unsqueeze(0).to(device)
             gf = torch.tensor(state["global_features"], dtype=torch.float32).unsqueeze(0).to(device)
             pm = torch.tensor(state["planet_mask"], dtype=torch.bool).unsqueeze(0).to(device)
-            rt = torch.tensor(
-                state["relational_tensor"], dtype=torch.float32
-            ).unsqueeze(0).to(device)
             with torch.no_grad():
-                output, _ = self.model(pf, ff, fm, gf, pm, rt, hidden)
+                output, _ = self.model(pf, ff, fm, gf, pm, None, hidden)
                 last_value = output.v_shaped.squeeze().item()
 
         self._buffer.compute_gae(last_value, cfg.gamma, cfg.gae_lambda)

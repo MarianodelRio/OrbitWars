@@ -171,15 +171,6 @@ class PlanetPolicyModel(nn.Module):
             nn.Linear(G, G // 2), nn.GELU(), nn.Linear(G // 2, 1)
         )
 
-    @staticmethod
-    def _chk(t: torch.Tensor, tag: str) -> None:
-        if torch.isnan(t).any() or torch.isinf(t).any():
-            raise RuntimeError(
-                f"[NaN/Inf @ {tag}] shape={tuple(t.shape)} "
-                f"nan={torch.isnan(t).sum().item()} "
-                f"inf={torch.isinf(t).sum().item()}"
-            )
-
     def forward(
         self,
         planet_features: torch.Tensor,
@@ -211,19 +202,9 @@ class PlanetPolicyModel(nn.Module):
                 v_shaped=zeros_b1,
             ), (dummy_h, dummy_c)
 
-        # --- NaN diagnostics (remove once source is identified) ---
-        self._chk(planet_features, "input:planet_features")
-        self._chk(fleet_features,  "input:fleet_features")
-        self._chk(global_features, "input:global_features")
-        if relational_tensor is not None:
-            self._chk(relational_tensor, "input:relational_tensor")
-        # -----------------------------------------------------------
-
         # Stage 0: encode
         planet_emb = self.planet_encoder(planet_features)   # (B, P, E)
-        self._chk(planet_emb, "stage0:planet_encoder")
         fleet_emb  = self.fleet_encoder(fleet_features)     # (B, F_max, F)
-        self._chk(fleet_emb,  "stage0:fleet_encoder")
 
         # Stage 1: cross-attention fleets→planets
         # Q from planets, K/V from fleets; dims differ so use manual matmul
@@ -257,7 +238,6 @@ class PlanetPolicyModel(nn.Module):
         cross_out = cross_out.reshape(B, ch, P, head_dim).permute(0, 2, 1, 3).reshape(B, P, cd)
 
         planet_emb = self.cross_norm(self.cross_out(torch.cat([planet_emb, cross_out], dim=-1)))
-        self._chk(planet_emb, "stage1:cross_attention_out")
 
         # Stage 2: self-attention with relational bias
         rel_bias = None
@@ -280,7 +260,6 @@ class PlanetPolicyModel(nn.Module):
                 .expand(-1, self.config.n_heads, P, -1)  # (B, n_heads, P, P)
                 .reshape(B * self.config.n_heads, P, P)
             )
-            self._chk(rel_bias,  "stage2:rel_bias")
             combined_mask = rel_bias + kp_expanded       # (B*n_heads, P, P)
             for block in self.planet_blocks:
                 x = block(x, attn_mask=combined_mask, key_padding_mask=None)
@@ -288,7 +267,6 @@ class PlanetPolicyModel(nn.Module):
             for block in self.planet_blocks:
                 x = block(x, attn_mask=None, key_padding_mask=key_pad)
         planet_ctx = x  # (B, P, E)
-        self._chk(planet_ctx, "stage2:planet_ctx")
 
         # Stage 3: attention pooling
         scale_e = math.sqrt(E)
@@ -316,7 +294,6 @@ class PlanetPolicyModel(nn.Module):
         global_repr = self.global_mlp(
             torch.cat([planet_pool, fleet_pool, global_features], dim=-1)
         )  # (B, G)
-        self._chk(global_repr, "stage3:global_repr")
 
         # Stage 4: LSTM recurrence
         if self.config.lstm_bypass:
@@ -330,7 +307,6 @@ class PlanetPolicyModel(nn.Module):
         else:
             lstm_out_seq, new_hidden = self.lstm(global_repr.unsqueeze(1), hidden_state)
             lstm_out = lstm_out_seq.squeeze(1)  # (B, G)
-        self._chk(lstm_out, "stage4:lstm_out")
 
         # ── Autoregressive action head decode ──────────────────────────────────────
 
