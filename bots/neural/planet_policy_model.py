@@ -247,12 +247,25 @@ class PlanetPolicyModel(nn.Module):
             rel_bias = rel_bias.reshape(B * self.config.n_heads, P, P)
 
         key_pad = ~planet_mask  # (B, P) True=padding
-        # Convert bool mask to float to avoid dtype mismatch with float attn_mask
-        # in nn.MultiheadAttention (mismatched types can produce NaN in PyTorch 2.x)
-        key_pad_float = torch.zeros_like(key_pad, dtype=torch.float32).masked_fill(key_pad, float('-inf'))
         x = planet_emb
-        for block in self.planet_blocks:
-            x = block(x, attn_mask=rel_bias, key_padding_mask=key_pad_float)
+        if rel_bias is not None:
+            # Pre-combine rel_bias and key_pad into one attn_mask so PyTorch never
+            # has to merge two separate masks internally — that internal path is
+            # numerically unstable on some CUDA builds (flash/mem-efficient backends).
+            kp_float = key_pad.float().masked_fill(key_pad, float('-inf'))  # (B, P)
+            kp_expanded = (
+                kp_float
+                .unsqueeze(1)                            # (B, 1, P)
+                .unsqueeze(1)                            # (B, 1, 1, P)
+                .expand(-1, self.config.n_heads, P, -1)  # (B, n_heads, P, P)
+                .reshape(B * self.config.n_heads, P, P)
+            )
+            combined_mask = rel_bias + kp_expanded       # (B*n_heads, P, P)
+            for block in self.planet_blocks:
+                x = block(x, attn_mask=combined_mask, key_padding_mask=None)
+        else:
+            for block in self.planet_blocks:
+                x = block(x, attn_mask=None, key_padding_mask=key_pad)
         planet_ctx = x  # (B, P, E)
 
         # Stage 3: attention pooling
