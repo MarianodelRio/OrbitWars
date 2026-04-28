@@ -16,7 +16,7 @@
     "n_attn_heads": 2
   },
   "lr": 0.001,
-  "batch_size": 16,
+  "batch_size": 64,
   "epochs": 30,
   "val_split": 0.15,
   "eval_every": 5,
@@ -41,7 +41,8 @@
       "state_transform": "raw",
       "action_transform": "raw",
       "reward_transform": null,
-      "step_filter": "non_empty_state"
+      "step_filter": "non_empty_state",
+      "cache_path": "data/cache/il_planet_policy_v2.h5"
     }
   },
   "device": "cpu",

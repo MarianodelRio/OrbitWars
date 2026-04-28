@@ -1,9 +1,9 @@
 {
   "mode": "single",
-  "bot1": "bots.heuristic.sniper:agent_fn",
-  "bot2": "bots.heuristic.baseline:agent_fn",
+  "bot1": "bots.neural.bot:NeuralBot?checkpoint=runs/planet_policy_il/run_013/checkpoints/best.pt",
+  "bot2": "bots.heuristic.sniper:agent_fn",
   "steps": 500,
   "n_matches": 10,
   "save_log": true,
-  "save_data": true
+  "save_data": false
 }

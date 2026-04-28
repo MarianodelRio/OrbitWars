@@ -17,7 +17,11 @@
       "Bash(python3 -c \"import pandas; print\\('pandas OK'\\)\")",
       "Bash(python3 -c \"import msgpack; print\\('msgpack OK'\\)\")",
       "Bash(python3 -c \"import numpy; print\\('numpy OK'\\)\")",
-      "Bash(.venv/bin/pip install *)"
+      "Bash(.venv/bin/pip install *)",
+      "Bash(python3 -c ' *)",
+      "Bash(python3 -c \"from kaggle_environments import make; env = make\\('orbit_wars'\\); help\\(env.step\\)\")",
+      "Bash(.venv/bin/python -c \"from bots.neural.action_codec_v2 import ActionCodecV2; print\\(ActionCodecV2\\(\\). BINS\\)\")",
+      "Bash(.venv/bin/python -c \"from bots.neural.action_codec_v2 import ActionCodecV2; print\\(ActionCodecV2.BINS\\)\")"
     ],
     "additionalDirectories": [
       "/home/mariano/Desktop/OrbitWars/bots",

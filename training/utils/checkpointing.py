@@ -79,3 +79,36 @@ class CheckpointManager:
             if p.name not in excluded
         ]
         return sorted(paths)
+
+    def save_snapshot(self, model, state_builder, codec, iteration: int) -> Path:
+        snapshots_dir = self._ckpt_dir / "snapshots"
+        snapshots_dir.mkdir(parents=True, exist_ok=True)
+
+        if isinstance(model, PlanetPolicyModel):
+            model_type = "planet_policy"
+            config_to_save = dataclasses.asdict(model.config)
+        else:
+            model_type = "flat"
+            config_to_save = model.config if hasattr(model, "config") else {}
+
+        checkpoint = {
+            "model_type": model_type,
+            "config": config_to_save,
+            "state_dict": model.state_dict(),
+            "max_planets": state_builder.max_planets,
+            "max_fleets": state_builder.max_fleets,
+            "n_amount_bins": codec.n_amount_bins,
+            "iteration": iteration,
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+
+        snap_path = snapshots_dir / f"snap_{iteration:06d}.pt"
+        torch.save(checkpoint, snap_path)
+        return snap_path
+
+    def list_snapshots(self) -> list[Path]:
+        snapshots_dir = self._ckpt_dir / "snapshots"
+        if not snapshots_dir.exists():
+            return []
+        paths = list(snapshots_dir.glob("snap_*.pt"))
+        return sorted(paths)

@@ -1,6 +1,6 @@
 {
-  "checkpoint_path": null,
-  "message": "neural bot test submission",
+  "checkpoint_path": "runs/planet_policy_il/run_013/checkpoints/best.pt",
+  "message": "neural planet-policy IL run_013 epoch12 val_loss=4.17",
   "competition": "orbit-wars",
   "save_log": true
 }
