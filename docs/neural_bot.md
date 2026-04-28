@@ -6,7 +6,7 @@
 
 - **Flat MLP** (`PolicyValueModel`) — encodes the full state as a flattened 1050-dim vector and applies a multi-head MLP. Single global action per turn.
 - **Pointer Network** (`PointerNetworkModel`) — encodes each planet individually with a shared MLP, uses dot-product attention to select source/target planets. Better generalisation across planet counts.
-- **Planet Policy** (`PlanetPolicyModel`) — entity-centric v2 architecture. Each owned planet independently decides whether and where to launch. Self-attention across planets captures inter-dependencies. This is the primary active-development model.
+- **Planet Policy** (`PlanetPolicyModel`) — entity-centric architecture. Each owned planet independently decides whether and where to launch. Self-attention across planets captures inter-dependencies. This is the primary active-development model.
 
 All models are trained via imitation learning on recorded heuristic matches. `NeuralBot` detects the model type automatically and dispatches to the correct state builder and codec.
 
@@ -23,7 +23,7 @@ bots/neural/
 ├── action_codec_v2.py       # Per-planet encode/decode for PlanetPolicyModel
 ├── model.py                 # PolicyValueModel — flat MLP
 ├── pointer_model.py         # PointerNetworkModel — attention-based
-├── planet_policy_model.py   # PlanetPolicyModel — per-planet entity-centric (v2)
+├── planet_policy_model.py   # PlanetPolicyModel — per-planet entity-centric
 ├── bot.py                   # NeuralBot — wraps any model for live play
 └── training.py              # ILSample, NeuralILDataset, build_il_dataset
 ```
@@ -32,7 +32,7 @@ bots/neural/
 
 ## Data flow
 
-### Inference — Planet Policy (v2)
+### Inference — Planet Policy
 
 ```
 obs dict
@@ -81,7 +81,7 @@ obs dict
 
 `NeuralBot.act()` detects the model type automatically via `isinstance` — no caller change needed.
 
-### Imitation learning — Planet Policy (v2)
+### Imitation learning — Planet Policy
 
 ```
 HDF5 file
@@ -89,8 +89,8 @@ HDF5 file
        ├─ StateBuilderV2.from_step(step, player) → StructuredStateV2
        └─ ActionCodecV2.encode_per_planet(raw_actions, context, planets, value, max_planets)
             └─ PerPlanetLabels((max_planets,) × 3 label arrays + my_planet_mask)
-                 └─ ILSample(planet_features_v2, fleet_features_v2, fleet_mask,
-                              global_features, labels_v2)
+                 └─ ILSample(planet_features, fleet_features, fleet_mask,
+                              global_features, labels)
                       └─ NeuralILDataset(use_planet_policy=True) → torch DataLoader
                            └─ PlanetPolicyModel (train) — per-planet CE loss
 ```
@@ -180,7 +180,7 @@ Training labels for one turn (flat/pointer mode). All indices are `-1` for NO_OP
 
 ### `PerPlanetLabels`  (`types.py`)
 
-Training labels for one turn (planet-policy v2 mode). One label per planet slot.
+Training labels for one turn (planet-policy mode). One label per planet slot.
 Non-mine and padding slots use `-1` as `ignore_index` in the loss.
 
 | Field | Shape | Description |
@@ -218,7 +218,7 @@ Returned by `PolicyValueModel.forward`. All tensors have batch dim `B`.
 
 ## `PlanetPolicyModel`  (`planet_policy_model.py`)
 
-The primary v2 model. Each owned planet independently decides whether and where to launch,
+The primary model. Each owned planet independently decides whether and where to launch,
 sharing information via self-attention.
 
 ```python

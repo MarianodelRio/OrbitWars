@@ -1,6 +1,6 @@
 {
   "bot": "bots.orbital_kineticist:agent_fn",
-  "message": "orbital kineticist v1",
+  "message": "orbital kineticist",
   "competition": "orbit-wars",
   "save_log": true
 }

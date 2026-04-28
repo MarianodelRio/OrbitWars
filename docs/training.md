@@ -160,7 +160,7 @@ The same syntax works inside the tournament `bots` registry:
 
 ```json
 "bots": {
-  "neural_v1": "bots.neural.bot:agent_fn?checkpoint=runs/neural_il/run_001/checkpoints/best.pt",
+  "neural": "bots.neural.bot:agent_fn?checkpoint=runs/neural_il/run_001/checkpoints/best.pt",
   "sniper":    "bots.heuristic.sniper:agent_fn"
 }
 ```

@@ -42,7 +42,7 @@
       "action_transform": "raw",
       "reward_transform": null,
       "step_filter": "non_empty_state",
-      "cache_path": "data/cache/il_planet_policy_v2.h5"
+      "cache_path": "data/cache/il_planet_policy.h5"
     }
   },
   "device": "auto",

@@ -16,7 +16,7 @@ A minimal `rl_config.json`:
 
 ```json
 {
-  "run_name": "rl_v1",
+  "run_name": "rl_run",
   "run_id": "exp01",
   "total_iterations": 1000,
   "n_rollout_steps": 2048,
@@ -93,6 +93,6 @@ Example monitoring with pandas:
 
 ```python
 import pandas as pd
-df = pd.read_csv("runs/rl_v1/exp01/metrics/rl_train.csv")
+df = pd.read_csv("runs/rl_run/exp01/metrics/rl_train.csv")
 df.plot(x="iteration", y=["policy_loss", "value_loss", "entropy"])
 ```

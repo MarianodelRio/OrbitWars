@@ -1,6 +1,6 @@
 # Mejoras potenciales del bot
 
-Análisis basado en la arquitectura actual: `PlanetPolicyModel` (69K params), `StateBuilderV2`, `shaped_reward`.
+Análisis basado en la arquitectura actual: `PlanetPolicyModel` (69K params), `StateBuilder`, `shaped_reward`.
 
 ---
 

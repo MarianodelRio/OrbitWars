@@ -109,7 +109,7 @@ class NeuralILDataset(Dataset):
 
         if self._use_planet_policy:
             state = self._state_builder.from_step(step, player)
-            lv2 = self._codec.encode_per_planet(
+            encoded = self._codec.encode_per_planet(
                 raw_actions,
                 state["context"],
                 step.planets,
@@ -122,10 +122,10 @@ class NeuralILDataset(Dataset):
                 "fleet_mask": torch.from_numpy(state["fleet_mask"]),
                 "global_features": torch.from_numpy(state["global_features"]).float(),
                 "planet_mask": torch.from_numpy(state["planet_mask"]),
-                "action_types": torch.from_numpy(lv2.planet_action_types).long(),
-                "target_idxs": torch.from_numpy(lv2.planet_target_idxs).long(),
-                "amount_bins": torch.from_numpy(lv2.planet_amount_bins).long(),
-                "value_target": torch.tensor(lv2.value_target, dtype=torch.float32),
+                "action_types": torch.from_numpy(encoded.planet_action_types).long(),
+                "target_idxs": torch.from_numpy(encoded.planet_target_idxs).long(),
+                "amount_bins": torch.from_numpy(encoded.planet_amount_bins).long(),
+                "value_target": torch.tensor(encoded.value_target, dtype=torch.float32),
             }
 
         if self._use_pointer:
@@ -333,7 +333,7 @@ def build_il_cache(
                         state = state_builder.from_step(step, player)
                         raw_actions = step.actions_p0 if player == 0 else step.actions_p1
                         vt = _value_for(player)
-                        lv2 = codec.encode_per_planet(
+                        encoded = codec.encode_per_planet(
                             raw_actions,
                             state["context"],
                             step.planets,
@@ -345,9 +345,9 @@ def build_il_cache(
                         batch_fm.append(state["fleet_mask"].view(np.uint8))
                         batch_gf.append(state["global_features"])
                         batch_pm.append(state["planet_mask"].view(np.uint8))
-                        batch_at.append(lv2.planet_action_types.astype(np.int8))
-                        batch_ti.append(lv2.planet_target_idxs.astype(np.int8))
-                        batch_ab.append(lv2.planet_amount_bins.astype(np.int8))
+                        batch_at.append(encoded.planet_action_types.astype(np.int8))
+                        batch_ti.append(encoded.planet_target_idxs.astype(np.int8))
+                        batch_ab.append(encoded.planet_amount_bins.astype(np.int8))
                         batch_vt.append(np.float32(vt))
                         batch_ei.append(np.int32(ep_idx))
 
