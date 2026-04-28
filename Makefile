@@ -1,6 +1,6 @@
 PYTHON := .venv/bin/python
 
-.PHONY: help match tournament submit submit-neural test test-unit test-integration train
+.PHONY: help match tournament submit submit-neural test test-unit test-integration train train-rl
 
 help:
 	@echo "Usage: make <target>"
@@ -13,6 +13,7 @@ help:
 	@echo "  test-unit          Run unit tests only"
 	@echo "  test-integration   Run integration tests only"
 	@echo "  train              Run IL training — flat MLP (config: training/il_config.json)"
+	@echo "  train-rl           Run RL/PPO training (config: CONFIG=path/to/rl_config.json)"
 
 match:
 	$(PYTHON) scripts/matches/run.py
@@ -37,3 +38,6 @@ test-integration:
 
 train:
 	$(PYTHON) scripts/train_il.py --config training/il_config.json
+
+train-rl:
+	$(PYTHON) scripts/train_rl.py --config $(CONFIG)
