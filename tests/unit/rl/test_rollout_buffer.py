@@ -16,6 +16,7 @@ def make_step(reward=0.1, done=False, terminal_reward=0.0, shaped_reward=0.0):
         "fleet_mask": np.zeros(10, dtype=bool),
         "planet_mask": np.zeros(max_planets, dtype=bool),
         "global_features": np.zeros(4, dtype=np.float32),
+        "relational_tensor": np.zeros((max_planets, max_planets, 4), dtype=np.float32),
     }
     rl_masks = RLMasks(
         my_planet_mask=torch.zeros(max_planets, dtype=torch.bool),
@@ -77,7 +78,7 @@ def test_get_batches_keys():
 
     required_keys = {
         "planet_features", "fleet_features", "fleet_mask", "planet_mask",
-        "global_features", "my_planet_mask", "valid_target_mask",
+        "global_features", "relational_tensor", "my_planet_mask", "valid_target_mask",
         "action_types", "target_idxs", "amount_bins",
         "log_prob_old", "value_old", "advantage", "ret",
     }

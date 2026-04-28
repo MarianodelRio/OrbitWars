@@ -4,70 +4,21 @@
 
 ---
 
-## 0. Fixes obligatorios antes de entrenar (< 20 min)
+## 0. Estado de fixes (actualizado 2026-04-28)
 
-Hay tres bugs que bloquean un pipeline limpio. Son cambios pequeños en archivos conocidos. Hay que resolverlos **antes** de lanzar cualquier entrenamiento.
+Los bugs originales han sido corregidos en el pull más reciente. Estado:
 
-### Bug 1 — `train.py` ignora `lstm_bypass`, `n_layers`, `ffn_hidden`
+### ~~Bug 1~~ — CORREGIDO
+`train.py` ya pasa `n_layers`, `ffn_hidden`, `lstm_bypass` en ambos bloques (RL líneas 87–89, IL líneas 153–155).
 
-`train.py` construye `PlanetPolicyConfig(...)` manualmente pero no pasa estos tres campos, que el dataclass sí expone. El resultado: el JSON de config los declara pero el modelo siempre arranca con los defaults (`n_layers=4, ffn_hidden=768, lstm_bypass=False`).
+### ~~Bug 2~~ — CORREGIDO
+`PotentialReward._potential()` ya incluye naves en flotas: `my_ships += sum(f[6] for f in obs.get("fleets", []) if f[1] == player)` ([training/rewards/potential.py:66](training/rewards/potential.py#L66)).
 
-Riesgo real: `il_config.json` tiene `"lstm_bypass": true` — **ignorado**. El bot IL entrena con LSTM aunque el config diga lo contrario. Si luego el RL usa `lstm_bypass=true`, el warmstart falla porque los pesos del LSTM no existen.
+### ~~Bug 3~~ — CORREGIDO
+`RLTrainer` ya trackea `self._best_mean_winrate` y llama a `save_rl_checkpoint(..., is_best_winrate=True)` cuando se supera ([training/trainers/rl_trainer.py:438-457](training/trainers/rl_trainer.py#L438)).
 
-**Decisión: usar LSTM en ambos (IL y RL). Poner `lstm_bypass: false` explícitamente en ambos configs y añadir las tres líneas al `train.py`.**
-
-Archivo: [train.py](train.py), líneas 75–87 (RL) y 139–151 (IL). En ambos bloques, dentro de `PlanetPolicyConfig(...)`, añadir:
-```python
-n_layers=model_config_dict.get("n_layers", 4),
-ffn_hidden=model_config_dict.get("ffn_hidden", 768),
-lstm_bypass=model_config_dict.get("lstm_bypass", False),
-```
-
-### Bug 2 — `PotentialReward` no incluye naves en flota
-
-[training/rewards/potential.py:65](training/rewards/potential.py#L65) calcula `my_ships` solo desde planetas. Pero el scoring de Kaggle cuenta **planetas + flotas**. El efecto: el agente aprende a no enviar flotas porque cada flota lanzada reduce momentáneamente su "potencial" y genera reward negativo.
-
-Archivo: [training/rewards/potential.py:54-72](training/rewards/potential.py#L54). En el método `_potential`, añadir las naves en tránsito:
-```python
-def _potential(self, obs: dict, player: int) -> float:
-    planets = obs.get("planets", [])
-    fleets  = obs.get("fleets", [])
-    if not planets:
-        return 0.0
-    my_planets     = sum(1 for p in planets if p[1] == player)
-    total_planets  = max(len(planets), 1)
-    my_production  = sum(p[6] for p in planets if p[1] == player)
-    total_prod     = max(sum(p[6] for p in planets), 1)
-    my_ships       = sum(p[5] for p in planets if p[1] == player) \
-                   + sum(f[6] for f in fleets  if f[1] == player)
-    log_ships_share = math.log(1 + my_ships) / math.log(1001)
-    return (
-        self.w_production * (my_production / total_prod)
-        + self.w_planets  * (my_planets   / total_planets)
-        + self.w_ships    * log_ships_share
-    )
-```
-
-### Bug 3 — `rl_best_winrate.pt` nunca se escribe
-
-[training/trainers/rl_trainer.py:403-418](training/trainers/rl_trainer.py#L403) llama a `save_rl_checkpoint(...)` pero siempre con `is_best_winrate=False` (default). El archivo `rl_best_winrate.pt` — el mejor checkpoint para submisión — nunca existe.
-
-En `rl_trainer.py`, añadir un tracker de mejor win rate y pasarlo:
-```python
-# en __init__ o _setup:
-self._best_mean_winrate = 0.0
-
-# dentro del bloque eval_every (tras evaluator.run):
-mean_wr = sum(r.get("win_rate", 0.0) for r in eval_results.values()) / max(len(eval_results), 1)
-is_best = mean_wr > self._best_mean_winrate
-if is_best:
-    self._best_mean_winrate = mean_wr
-self._ckpt_manager.save_rl_checkpoint(..., is_best_winrate=is_best)
-```
-
-### Bug 4 — `Makefile` apunta a los scripts viejos
-
-`make train` ejecuta `scripts/train_il.py` y `make train-rl` ejecuta `scripts/train_rl.py`. El punto de entrada unificado es ahora `train.py`. Actualizar el Makefile:
+### Bug 4 — PARCIALMENTE PENDIENTE
+`make train` y `make train-rl` siguen llamando a `scripts/train_il.py` y `scripts/train_rl.py` respectivamente. Los demás targets (`train-bg`, `train-phase1/2/3`, `pipeline`) ya usan `train.py`. Impacto bajo — los scripts legados funcionan — pero inconsistente. Cuando convenga:
 ```makefile
 train:
 	$(PYTHON) train.py --config training/il_config.json
@@ -76,11 +27,10 @@ train-rl:
 	$(PYTHON) train.py --config $(CONFIG)
 ```
 
-### Verificar tras los fixes
+### Verificar el estado actual
 ```bash
 make test-quick
-make train --dry-run
-make train-rl CONFIG=training/rl_config.json --dry-run
+python train.py --config training/rl_phase1.json --dry-run
 ```
 
 ---

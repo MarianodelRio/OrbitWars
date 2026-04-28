@@ -10,7 +10,7 @@ from training.rl.ppo import compute_ppo_loss, PPOLossResult
 from training.utils.rl_config import RLConfig
 
 
-def make_random_batch(B=4, max_planets=5, n_bins=5, max_fleets=10, Dp=10, Df=8, Dg=4):
+def make_random_batch(B=4, max_planets=5, n_bins=5, max_fleets=10, Dp=24, Df=16, Dg=16):
     planet_mask = torch.zeros(B, max_planets, dtype=torch.bool)
     planet_mask[:, :3] = True
 
@@ -42,6 +42,7 @@ def make_random_batch(B=4, max_planets=5, n_bins=5, max_fleets=10, Dp=10, Df=8, 
         "fleet_mask": torch.zeros(B, max_fleets, dtype=torch.bool),
         "planet_mask": planet_mask,
         "global_features": torch.randn(B, Dg),
+        "relational_tensor": torch.zeros(B, max_planets, max_planets, 4),
         "my_planet_mask": my_planet_mask,
         "valid_target_mask": valid_target_mask,
         "action_types": action_types,

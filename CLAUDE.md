@@ -12,13 +12,38 @@ Active model: [`PlanetPolicyModel`](bots/neural/planet_policy_model.py) (entity-
 ## Structure
 
 ```
-bots/           # Bot implementations (one file per bot variant)
-experiments/    # Evaluation scripts and results
-tests/          # Simulation and unit tests
-docs/           # Workflow documentation
+bots/
+  heuristic/      # Rule-based bots (baseline, sniper, oracle_sniper)
+  neural/         # PlanetPolicyModel, StateBuilder, ActionCodec, NeuralBot
+  scoring/        # Scoring-based heuristic bot
+  registry.py     # Short-name → module:fn mapping
+  interface.py    # Bot base class + make_agent()
+training/
+  envs/           # OrbitWarsEnv (non-gym kaggle wrapper)
+  rl/             # PPO loss, GAE, RolloutBuffer, OpponentPool
+  rewards/        # PotentialReward (shaping + events + terminal)
+  trainers/       # ILTrainer, RLTrainer
+  evaluation/     # Evaluator (match-based win-rate)
+  utils/          # RLConfig, RunConfig, CheckpointManager, MetricsLogger
+dataset/          # IL dataset building (HDF5 cache, torch adapter)
+game/
+  env/            # kaggle env runner + load_agent
+  eval/           # match metrics
+  logic/          # combat, geometry, threat
+  state/          # state models
+  data/           # HDF5 writer
+tournament/       # ELO ranking
+submission/       # Kaggle submission packaging
+scripts/          # CLI helpers (matches, tournament, train_il, train_rl)
+tests/
+  unit/           # Unit tests (rl/, action_codec, state_builder, …)
+  integration/    # Integration tests (bots, rl env step)
+docs/             # Workflow documentation
+train.py          # Unified CLI entry point (auto-detects IL vs RL from config)
 ```
 
-- `bots/` contains self-contained bot files. Each bot is a function that receives observation and returns actions.
+- `bots/` contains self-contained bot files. Each bot exposes an `agent_fn(obs, config)` at module level.
+- `train.py` is the primary entry point for both IL and RL training; mode is auto-detected from the config file.
 - Simulation runs locally via `kaggle_environments`.
 
 ## Development Commands
