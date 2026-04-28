@@ -85,6 +85,25 @@ def agent_fn(obs, config=None):
 
 A module-level singleton backed by a default (untrained) `NeuralBot`. Used for `kaggle_environments` compatibility when no checkpoint is specified. Replace with `NeuralBot.load()` for trained inference.
 
+## Checkpoint Management
+
+Each training run produces several checkpoint files under `runs/<run_name>/<run_id>/checkpoints/`:
+
+| File | Description | When to Use |
+|---|---|---|
+| `best.pt` | Best IL validation loss | Pass as `IL_CKPT` to warmstart RL phase 1 (`make train-phase1 IL_CKPT=<path>`) |
+| `rl_last.pt` | Most recent RL checkpoint (saved every `save_every` iterations) | Warmstart for the next RL phase; auto-detected by `train-phase2` and `train-phase3` |
+| `rl_best_winrate.pt` | Highest mean win-rate across eval opponents during RL training | Submit this checkpoint |
+| `snapshots/snap_NNNNNN.pt` | Opponent pool entries (historical self-play snapshots) | Not for submission |
+
+### Promotion Workflow
+
+1. Evaluate the candidate checkpoint: `make eval CKPT=runs/<run_name>/<run_id>/checkpoints/rl_best_winrate.pt`
+2. Review the per-opponent win-rate output.
+3. If win-rate is satisfactory, package and submit: `make submit-neural`
+
+---
+
 ## Creating a New Bot
 
 Minimum template:

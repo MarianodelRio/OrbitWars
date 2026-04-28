@@ -27,14 +27,20 @@ docs/           # Workflow documentation
 # Install dependencies
 pip install kaggle-environments
 
-# Run a local match between two bots
-python scripts/run_match.py
-
-# Run tests
-python -m pytest tests/
-
-# Quick evaluation (multiple matches)
-# Use /orbit-eval skill for structured evaluation
+make match           # single match
+make tournament      # round-robin tournament with ELO
+make data            # generate IL training data
+make cache           # build HDF5 training cache
+make train           # IL training
+make train-phase1 IL_CKPT=<path>   # RL phase 1 (requires IL checkpoint)
+make train-phase2    # RL phase 2 (warmstarts from phase 1 rl_last.pt)
+make train-phase3    # RL phase 3 (warmstarts from phase 2 rl_last.pt)
+make pipeline        # full pipeline, blocking
+make eval CKPT=<path>              # evaluate a checkpoint
+make watch RUN=<path>              # stream live training metrics
+make submit-neural   # package and submit neural bot
+make test            # all tests
+make test-unit       # unit tests only
 ```
 
 ## Role System (Strict)

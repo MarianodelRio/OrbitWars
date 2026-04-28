@@ -16,6 +16,19 @@ python train.py --config training/rl_config.json --dry-run
 python train.py --config training/il_config.json --device cuda
 ```
 
+Alternatively, use Makefile targets:
+
+```bash
+make train                                              # IL training
+make train-phase1 IL_CKPT=runs/.../best.pt             # RL phase 1 (requires IL checkpoint)
+make train-phase2                                       # RL phase 2 (warmstarts from phase 1 rl_last.pt)
+make train-phase3                                       # RL phase 3 (warmstarts from phase 2 rl_last.pt)
+make pipeline                                           # full pipeline, blocking (runs all steps sequentially)
+make cache                                              # build HDF5 training cache
+make eval CKPT=runs/.../rl_best_winrate.pt             # evaluate a checkpoint
+make watch RUN=runs/<run>/<id>                          # stream live training metrics
+```
+
 Mode is auto-detected: configs containing `total_iterations` + `n_rollout_steps` are treated as RL; configs containing `epochs` are treated as IL.
 
 ---
@@ -111,6 +124,34 @@ runs/<run_name>/<run_id>/
 
 ---
 
+## Three-Phase RL Curriculum
+
+RL training is split into three sequential phases, each building on the previous checkpoint.
+
+**Phase 1** (`training/rl_phase1.json`) — 300 iterations
+- Opponents: heuristic-only (no self-play).
+- KL-BC regularization and IL distillation anchors are active to keep the policy close to the IL warmstart.
+- Requires `IL_CKPT` pointing to a trained `best.pt` from the IL run.
+- Launch with: `make train-phase1 IL_CKPT=runs/<run>/<id>/checkpoints/best.pt`
+
+**Phase 2** (`training/rl_phase2.json`) — 500 iterations
+- Opponents: 40% self-play, remainder from heuristic pool.
+- KL-BC and IL distillation anchors are removed.
+- Warmstarts automatically from phase 1 `rl_last.pt`.
+- Launch with: `make train-phase2`
+
+**Phase 3** (`training/rl_phase3.json`) — 700 iterations
+- Opponents: 70% self-play.
+- Lower learning rate (`lr=1e-4`) for fine-tuning.
+- Warmstarts automatically from phase 2 `rl_last.pt`.
+- Launch with: `make train-phase3`
+
+**Key checkpoint:** `rl_best_winrate.pt` — saved whenever the model achieves its highest mean win-rate across eval opponents during RL training. This is the checkpoint to submit.
+
+To run all three phases sequentially in one blocking call: `make pipeline`
+
+---
+
 ## Reinforcement Learning (RL) with PPO
 
 ### Training Loop
@@ -136,7 +177,11 @@ r_shaped = lam * (gamma * Phi(s') - Phi(s))
 Phi(s) = w_production * (my_production / total_production)
        + w_planets    * (my_planets / total_planets)
        + w_ships      * log(1 + my_ships) / log(1001)
+
+where my_ships = sum of ships on owned planets + sum of ships in owned fleets
 ```
+
+Fleet ships are included so the agent is not penalized for launching fleets.
 
 **Event rewards:**
 
@@ -295,24 +340,21 @@ rsync -avz ./data/ <user>@<VM_IP>:~/OrbitWars/data/
 ### Training commands
 
 ```bash
-make train                                      # IL training
-make train-rl CONFIG=training/rl_config.json   # RL training
-make test-unit                                  # run unit tests
+make train                                              # IL training
+make train-phase1 IL_CKPT=runs/.../best.pt             # RL phase 1 (heuristic opponents + BC anchors)
+make pipeline                                           # full pipeline, blocking
 ```
-
-### Note on rl_config.json
-
-`training/rl_config.json` is not committed to the repo. `make train-rl` will fail with a clear error if the file is missing. You must create or copy this file before running RL training.
 
 ### Troubleshooting
 
 - `nvidia-smi: command not found` — NVIDIA driver is not installed; `setup.sh` falls back to the CPU wheel automatically.
 - `torch.cuda.is_available()` returns `False` on a GPU VM — check your driver version; re-run `setup.sh` (it is idempotent).
-- `make train-rl` fails with "No such file" — `training/rl_config.json` is missing.
 
 ---
 
 ## Monitoring
+
+Use `make watch RUN=runs/<run_name>/<run_id>` to stream live training metrics to the terminal.
 
 Training metrics are written as CSV files to `runs/<run_name>/<run_id>/metrics/`:
 
