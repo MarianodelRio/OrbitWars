@@ -1,0 +1,72 @@
+{
+  "run_name": "rl_phase1_anchored",
+  "run_id": "",
+  "device": "auto",
+  "seed": 42,
+  "total_iterations": 300,
+
+  "model_config": {
+    "Dp": 24, "Df": 16, "Dg": 16,
+    "E": 192, "F": 128, "G": 384,
+    "max_planets": 50, "max_fleets": 200,
+    "n_amount_bins": 8, "n_heads": 8,
+    "n_layers": 4, "ffn_hidden": 768,
+    "dropout": 0.1, "lstm_bypass": false
+  },
+
+  "n_rollout_steps": 2048,
+  "steps_per_episode": 500,
+  "ppo_epochs": 4,
+  "ppo_batch_size": 256,
+  "clip_eps": 0.2,
+  "vf_coef": 0.5,
+  "max_grad_norm": 0.5,
+  "lr": 0.0003,
+  "lr_schedule": "cosine",
+  "normalize_advantages": true,
+
+  "gamma": 0.997,
+  "gae_lambda": 0.95,
+
+  "w_planets": 0.5,
+  "w_production": 1.0,
+  "w_ships": 0.1,
+  "reward_lambda": 0.5,
+  "r_terminal_win": 10.0,
+  "r_terminal_loss": -10.0,
+  "r_terminal_margin_coef": 5.0,
+  "r_event_capture_enemy": 0.5,
+  "r_event_capture_comet": 0.2,
+  "r_event_eliminate_opponent": 1.0,
+  "r_event_lose_planet": -0.3,
+  "r_explore": 0.01,
+  "explore_iterations": 200,
+
+  "entropy_coef_action_type": 0.02,
+  "entropy_coef_target": 0.005,
+  "entropy_coef_amount": 0.005,
+
+  "self_play_prob": 0.0,
+  "heuristic_opponents": [
+    "bots.heuristic.baseline:agent_fn",
+    "bots.heuristic.sniper:agent_fn",
+    "bots.scoring.bot:agent_fn",
+    "bots.heuristic.oracle_sniper:agent_fn"
+  ],
+  "frozen_checkpoint": "<IL_BEST>",
+  "max_snapshots": 5,
+  "snapshot_every": 50,
+
+  "bc_policy_path": "<IL_BEST>",
+  "kl_bc_coef_start": 1.0,
+  "kl_bc_coef_end": 0.1,
+  "kl_bc_coef_decay_iters": 200,
+
+  "il_data_cache_path": "data/cache/il_planet_policy.h5",
+  "il_distill_ratio": 0.10,
+
+  "eval_every": 25,
+  "n_eval_matches": 20,
+  "eval_opponents": ["heuristic.baseline", "heuristic.sniper", "scoring.bot", "heuristic.oracle_sniper"],
+  "save_every": 50
+}

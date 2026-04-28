@@ -158,6 +158,7 @@ class RLTrainer:
                     self._il_loader = None
 
         torch.manual_seed(cfg.seed)
+        self._best_mean_winrate = 0.0
 
     def _collect_rollout(self) -> None:
         cfg = self.config
@@ -434,6 +435,26 @@ class RLTrainer:
                     )
                     eval_results = evaluator.run(epoch=iteration)
                     self._rl_metrics_logger.log_eval(iteration, eval_results)
+                    mean_winrate = sum(
+                        v.get("win_rate", 0.0) for v in eval_results.values()
+                    ) / max(len(eval_results), 1)
+                    if mean_winrate > self._best_mean_winrate:
+                        self._best_mean_winrate = mean_winrate
+                        best_metrics = {
+                            "policy_loss": avg_ppo_result.policy_loss,
+                            "value_loss": avg_ppo_result.value_loss,
+                            "entropy": avg_ppo_result.entropy,
+                        }
+                        self._ckpt_manager.save_rl_checkpoint(
+                            self.model,
+                            self._optimizer,
+                            self._lr_scheduler,
+                            self.state_builder,
+                            self.codec,
+                            iteration,
+                            best_metrics,
+                            is_best_winrate=True,
+                        )
                 except Exception as e:
                     print(f"[RLTrainer] Eval failed at iteration {iteration}: {e}")
 

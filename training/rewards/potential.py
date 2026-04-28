@@ -63,6 +63,7 @@ class PotentialReward:
         total_production = max(sum(p[6] for p in planets), 1)
 
         my_ships = sum(p[5] for p in planets if p[1] == player)
+        my_ships += sum(f[6] for f in obs.get("fleets", []) if f[1] == player)
         log_ships_share = math.log(1 + my_ships) / math.log(1001)  # fixed max 1000 ships
 
         return (

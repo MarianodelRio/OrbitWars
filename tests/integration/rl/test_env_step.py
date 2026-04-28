@@ -7,7 +7,7 @@ from training.rewards.potential import PotentialReward
 from training.envs.orbit_env import OrbitWarsEnv
 
 
-STRUCTURED_STATE_KEYS = {"planet_features", "fleet_features", "fleet_mask", "planet_mask", "global_features", "context"}
+STRUCTURED_STATE_KEYS = {"planet_features", "fleet_features", "fleet_mask", "planet_mask", "global_features", "context", "relational_tensor"}
 
 
 def make_env(steps_per_episode=50):

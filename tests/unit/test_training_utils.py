@@ -309,3 +309,47 @@ def test_load_agent_checkpoint_loads_on_first_call(tmp_path):
     }
     result = agent(obs)
     assert isinstance(result, list)
+
+
+# ---------------------------------------------------------------------------
+# RL checkpoint (Bug 3 regression)
+# ---------------------------------------------------------------------------
+
+def test_rl_checkpoint_is_best_winrate_true_creates_file(tmp_path):
+    mgr = _make_ckpt_manager(tmp_path)
+    model = _make_model()
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    sb = _make_state_builder()
+    codec = _make_codec()
+    mgr.save_rl_checkpoint(model, optimizer, None, sb, codec, iteration=1, metrics={}, is_best_winrate=True)
+    assert (tmp_path / "checkpoints" / "rl_best_winrate.pt").exists()
+
+
+def test_rl_checkpoint_is_best_winrate_false_no_file(tmp_path):
+    mgr = _make_ckpt_manager(tmp_path)
+    model = _make_model()
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    sb = _make_state_builder()
+    codec = _make_codec()
+    mgr.save_rl_checkpoint(model, optimizer, None, sb, codec, iteration=1, metrics={}, is_best_winrate=False)
+    assert not (tmp_path / "checkpoints" / "rl_best_winrate.pt").exists()
+
+
+def test_load_rl_checkpoint_round_trips_iteration(tmp_path):
+    mgr = _make_ckpt_manager(tmp_path)
+    model = _make_model()
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    sb = _make_state_builder()
+    codec = _make_codec()
+    mgr.save_rl_checkpoint(model, optimizer, None, sb, codec, iteration=42, metrics={}, is_best_winrate=False)
+    ckpt = mgr.load_rl_checkpoint(tag="rl_last")
+    assert ckpt["iteration"] == 42
+
+
+def test_save_snapshot_creates_file_in_snapshots_subdir(tmp_path):
+    mgr = _make_ckpt_manager(tmp_path)
+    model = _make_model()
+    sb = _make_state_builder()
+    codec = _make_codec()
+    mgr.save_snapshot(model, sb, codec, iteration=100)
+    assert (tmp_path / "checkpoints" / "snapshots" / "snap_000100.pt").exists()

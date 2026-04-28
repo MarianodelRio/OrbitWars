@@ -3,6 +3,7 @@ from game.env.runner import run_match
 from bots.heuristic.sniper import agent_fn as sniper
 from bots.heuristic.baseline import agent_fn as baseline
 from bots.heuristic.sniper import agent_fn as baseline_bot
+from bots.heuristic.oracle_sniper import agent_fn as oracle_sniper
 
 def test_sniper_vs_baseline_runs():
     result = run_match(sniper, baseline, steps=200)
@@ -21,3 +22,8 @@ def test_sniper_beats_baseline_majority():
 def test_baseline_bot_runs():
     result = run_match(baseline_bot, baseline, steps=100)
     assert "winner" in result
+
+def test_oracle_sniper_runs():
+    result = run_match(oracle_sniper, baseline, steps=200)
+    assert "winner" in result
+    assert len(result["rewards"]) == 2

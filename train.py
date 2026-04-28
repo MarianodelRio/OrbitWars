@@ -84,6 +84,9 @@ def _run_training(args) -> None:
             n_amount_bins=model_config_dict.get("n_amount_bins", 8),
             dropout=model_config_dict.get("dropout", 0.1),
             n_heads=model_config_dict.get("n_heads", 8),
+            n_layers   = model_config_dict.get("n_layers",    4),
+            ffn_hidden = model_config_dict.get("ffn_hidden",  768),
+            lstm_bypass= model_config_dict.get("lstm_bypass", False),
         )
         model = PlanetPolicyModel(planet_cfg)
 
@@ -148,6 +151,9 @@ def _run_training(args) -> None:
             n_amount_bins=model_config_dict.get("n_amount_bins", 8),
             dropout=model_config_dict.get("dropout", 0.1),
             n_heads=model_config_dict.get("n_heads", 8),
+            n_layers   = model_config_dict.get("n_layers",    4),
+            ffn_hidden = model_config_dict.get("ffn_hidden",  768),
+            lstm_bypass= model_config_dict.get("lstm_bypass", False),
         )
         model = PlanetPolicyModel(planet_cfg)
         state_builder = StateBuilder(max_planets=planet_cfg.max_planets, max_fleets=planet_cfg.max_fleets)

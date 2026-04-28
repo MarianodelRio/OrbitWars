@@ -57,13 +57,13 @@ def test_planet_loss_negative_reward():
     assert reward < 0.0
 
 
-def test_clipping():
-    # Use large weights so shaped reward would exceed clip_abs without clipping
-    pr = PotentialReward(w_planets=10.0, w_production=10.0, w_ships=10.0, gamma=1.0, lam=1.0, clip_abs=0.2)
+def test_large_weights_produce_large_reward():
+    # Large weights on a planet-capture event should produce a reward substantially greater than 1
+    pr = PotentialReward(w_planets=10.0, w_production=10.0, w_ships=10.0, gamma=1.0, lam=1.0)
     prev = make_obs([[0, 1, 10, 10, 1, 10, 2]])
     curr = make_obs([[0, 0, 10, 10, 1, 10, 2]])
     reward = pr.compute(prev, curr, player=0)
-    assert abs(reward) > 0.2
+    assert reward > 1.0
 
 
 def test_no_change_near_zero():
@@ -127,3 +127,40 @@ def test_reset_episode_clears_combat_flags():
     pr._combat_flags = {0: True, 1: True}
     pr.reset_episode()
     assert len(pr._combat_flags) == 0
+
+
+# ---------------------------------------------------------------------------
+# Fleet ships in potential (Bug 2 regression)
+# ---------------------------------------------------------------------------
+
+def test_fleet_ships_added_to_planet_ships():
+    pr = PotentialReward(w_production=0.0, w_planets=0.0, w_ships=1.0)
+    # fleet: [fleet_id, player, x, y, angle, eta, ships]
+    obs_without_fleet = {"planets": [[0, 0, 10, 10, 1, 100, 2]], "fleets": []}
+    obs_with_fleet = {"planets": [[0, 0, 10, 10, 1, 100, 2]], "fleets": [[1, 0, 20, 20, 0.0, 3, 50]]}
+    assert pr._potential(obs_with_fleet, 0) > pr._potential(obs_without_fleet, 0)
+
+
+def test_opponent_fleet_ships_not_counted():
+    pr = PotentialReward(w_production=0.0, w_planets=0.0, w_ships=1.0)
+    obs_without_fleet = {"planets": [[0, 0, 10, 10, 1, 100, 2]], "fleets": []}
+    obs_with_enemy_fleet = {"planets": [[0, 0, 10, 10, 1, 100, 2]], "fleets": [[1, 1, 20, 20, 0.0, 3, 50]]}
+    assert pr._potential(obs_with_enemy_fleet, 0) == pytest.approx(pr._potential(obs_without_fleet, 0))
+
+
+def test_fleet_ships_zero_for_empty_fleet_list():
+    pr = PotentialReward(w_ships=1.0, w_planets=0.0, w_production=0.0)
+    obs = {"planets": [[0, 0, 10, 10, 1, 100, 2]], "fleets": []}
+    import math as _math
+    expected = _math.log(1 + 100) / _math.log(1001)
+    assert pr._potential(obs, 0) == pytest.approx(expected)
+
+
+def test_compute_events_captures_enemy_and_lose_planet():
+    pr = PotentialReward()
+    # prev: planet 0 owned by player 1, planet 1 owned by player 0
+    prev = make_obs([[0, 1, 10, 10, 1, 10, 2], [1, 0, 20, 20, 1, 10, 2]])
+    # curr: planet 0 owned by player 0, planet 1 owned by player 1
+    curr = make_obs([[0, 0, 10, 10, 1, 10, 2], [1, 1, 20, 20, 1, 10, 2]])
+    result = pr._compute_events(prev, curr, player=0)
+    assert result == pytest.approx(pr.r_event_capture_enemy + pr.r_event_lose_planet)

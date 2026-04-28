@@ -247,7 +247,7 @@ def _make_output(n_planets=MAX_PLANETS, all_noop=False, launch_planet=0, target_
     tgt = np.zeros((n_planets, n_planets), dtype=np.float32)
     tgt[launch_planet, target_planet] = 100.0
 
-    amt = np.zeros((n_planets, 9), dtype=np.float32)
+    amt = np.zeros((n_planets, 8), dtype=np.float32)
     amt[launch_planet, amount_bin] = 100.0
 
     return _FakeOutput(at, tgt, amt)

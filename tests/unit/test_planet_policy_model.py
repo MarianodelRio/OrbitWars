@@ -125,7 +125,7 @@ def test_default_config_defaults():
     assert cfg.ffn_hidden == 768
     assert cfg.max_planets == 50
     assert cfg.max_fleets == 200
-    assert cfg.n_amount_bins == 9
+    assert cfg.n_amount_bins == 8
 
 
 # ---------------------------------------------------------------------------
@@ -250,3 +250,32 @@ def test_three_value_heads_shapes():
     assert out.v_score_diff.shape == (2, 1)
     assert out.v_shaped.shape == (2, 1)
     assert out.v_outcome.abs().max().item() <= 1.0 + 1e-6
+
+
+# ---------------------------------------------------------------------------
+# Config field tests (Bug 1 regression)
+# ---------------------------------------------------------------------------
+
+def test_config_reads_lstm_bypass_from_kwargs():
+    from bots.neural.planet_policy_model import PlanetPolicyConfig
+    cfg = PlanetPolicyConfig(lstm_bypass=True)
+    assert cfg.lstm_bypass is True
+
+
+def test_config_reads_n_layers_and_ffn_hidden():
+    from bots.neural.planet_policy_model import PlanetPolicyConfig
+    cfg = PlanetPolicyConfig(n_layers=2, ffn_hidden=128)
+    assert cfg.n_layers == 2
+    assert cfg.ffn_hidden == 128
+
+
+def test_forward_with_lstm_bypass_true():
+    cfg = _small_cfg(lstm_bypass=True)
+    model = PlanetPolicyModel(cfg)
+    model.eval()
+    pf, ff, fm, gf, pm, rt = _make_batch(cfg, B=1)
+    with torch.no_grad():
+        out, hidden_state = model(pf, ff, fm, gf, pm, rt)
+    assert out.action_type_logits.shape == (1, cfg.max_planets, 3)
+    assert out.v_outcome.shape == (1, 1)
+    assert isinstance(hidden_state, tuple) and len(hidden_state) == 2
