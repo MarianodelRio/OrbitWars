@@ -100,7 +100,6 @@ class RLTrainer:
             w_ships=cfg.w_ships,
             gamma=cfg.gamma,
             lam=cfg.reward_lambda,
-            clip_abs=cfg.reward_clip_abs,  # deprecated but kept for compat
             r_terminal_win=cfg.r_terminal_win,
             r_terminal_loss=cfg.r_terminal_loss,
             r_terminal_margin_coef=cfg.r_terminal_margin_coef,

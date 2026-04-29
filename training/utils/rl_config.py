@@ -21,6 +21,7 @@ class RLConfig:
     ppo_epochs: int = 4
     ppo_batch_size: int = 256
     clip_eps: float = 0.2
+    value_clip_eps: float | None = None
     vf_coef: float = 0.5
     ent_coef: float = 0.01
     max_grad_norm: float = 0.5
@@ -36,7 +37,6 @@ class RLConfig:
     w_production: float = 0.5
     w_ships: float = 0.1
     reward_lambda: float = 0.1
-    reward_clip_abs: float = 0.2
     r_terminal_win: float = 10.0
     r_terminal_loss: float = -10.0
     r_terminal_margin_coef: float = 5.0

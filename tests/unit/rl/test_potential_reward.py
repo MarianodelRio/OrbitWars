@@ -22,7 +22,7 @@ def test_empty_planets_list_returns_zero():
 
 
 def test_planet_gain_positive_reward():
-    pr = PotentialReward(gamma=1.0, lam=1.0, clip_abs=1.0)
+    pr = PotentialReward(gamma=1.0, lam=1.0)
     # Before: player 0 owns 1/3 planets
     prev = make_obs([
         [0, 0, 10, 10, 1, 10, 2],
@@ -40,7 +40,7 @@ def test_planet_gain_positive_reward():
 
 
 def test_planet_loss_negative_reward():
-    pr = PotentialReward(gamma=1.0, lam=1.0, clip_abs=1.0)
+    pr = PotentialReward(gamma=1.0, lam=1.0)
     # Before: player 0 owns 2/3 planets
     prev = make_obs([
         [0, 0, 10, 10, 1, 10, 2],
@@ -67,7 +67,7 @@ def test_large_weights_produce_large_reward():
 
 
 def test_no_change_near_zero():
-    pr = PotentialReward(gamma=1.0, lam=0.05, clip_abs=0.2)
+    pr = PotentialReward(gamma=1.0, lam=0.05)
     planets = [
         [0, 0, 10, 10, 1, 10, 2],
         [1, 1, 20, 20, 1, 10, 2],

@@ -13,7 +13,6 @@ class PotentialReward:
         w_ships: float = 0.1,
         gamma: float = 0.99,
         lam: float = 0.1,
-        clip_abs: float = 0.2,  # deprecated, ignored
         r_terminal_win: float = 10.0,
         r_terminal_loss: float = -10.0,
         r_terminal_margin_coef: float = 5.0,
@@ -113,19 +112,29 @@ class PotentialReward:
         return reward
 
     def _compute_events(self, prev_obs: dict, curr_obs: dict, player: int) -> float:
+        comet_ids = set(curr_obs.get("comet_planet_ids", []))
         curr_planets = curr_obs.get("planets", [])
-        prev_planets = prev_obs.get("planets", [])
-
-        prev_owner_map = {p[0]: p[1] for p in prev_planets}
+        prev_owner_map = {p[0]: p[1] for p in prev_obs.get("planets", [])}
+        curr_owner_map = {p[0]: p[1] for p in curr_planets}
         total = 0.0
 
         for p in curr_planets:
-            prev_owner = prev_owner_map.get(p[0], -1)
-            curr_owner = p[1]
-            if prev_owner >= 0 and prev_owner != player and curr_owner == player:
+            pid, curr_owner = p[0], p[1]
+            prev_owner = prev_owner_map.get(pid, -1)
+            if curr_owner != player:
+                continue
+            if prev_owner == player:
+                continue
+            if pid in comet_ids:
+                total += self.r_event_capture_comet
+            elif prev_owner >= 0:
                 total += self.r_event_capture_enemy
-            if prev_owner == player and curr_owner >= 0 and curr_owner != player:
-                total += self.r_event_lose_planet
+
+        for p in prev_obs.get("planets", []):
+            if p[1] == player:
+                curr_owner_now = curr_owner_map.get(p[0], -1)
+                if curr_owner_now != player and curr_owner_now >= 0:
+                    total += self.r_event_lose_planet
 
         return total
 

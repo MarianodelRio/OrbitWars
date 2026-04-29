@@ -161,13 +161,16 @@ def compute_ppo_loss(
     else:
         policy_loss = torch.zeros(1, requires_grad=True, device=raw_policy.device).squeeze()
 
-    # Value loss (clipped)
+    # Value loss (conditionally clipped)
     value_pred = output.v_shaped.squeeze(-1).squeeze(-1)  # (B,)
-    v_clipped = value_old + torch.clamp(value_pred - value_old, -config.clip_eps, config.clip_eps)
-    v_errs = 0.5 * torch.max(
-        (value_pred - ret) ** 2,
-        (v_clipped - ret) ** 2,
-    )
+    if config.value_clip_eps is not None:
+        v_clipped = value_old + torch.clamp(value_pred - value_old, -config.value_clip_eps, config.value_clip_eps)
+        v_errs = 0.5 * torch.max(
+            (value_pred - ret) ** 2,
+            (v_clipped - ret) ** 2,
+        )
+    else:
+        v_errs = 0.5 * (value_pred - ret) ** 2
     finite_mask_val = torch.isfinite(v_errs)
     if finite_mask_val.any():
         value_loss = v_errs[finite_mask_val].mean()
