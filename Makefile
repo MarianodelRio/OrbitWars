@@ -77,20 +77,20 @@ build_il_cache(DataCatalog.scan(), sb, codec, cache_path, perspective='both'); \
 print('Cache written to', cache_path)"
 
 train-bg:
-	nohup $(PYTHON) train.py --config training/il_config.json \
+	nohup $(PYTHON) -u train.py --config training/il_config.json \
 	    > runs/il_train.log 2>&1 & echo "PID: $$!"
 
 train-phase1:
 	@test -f "$(IL_CKPT)" || { echo "ERROR: IL checkpoint not found: $(IL_CKPT)"; echo "Run 'make train-bg' first or set IL_CKPT=<path>"; exit 1; }
-	nohup $(PYTHON) train.py --config training/rl_phase1.json \
+	nohup $(PYTHON) -u train.py --config training/rl_phase1.json \
 	    > runs/rl_phase1.log 2>&1 & echo "PID: $$!"
 
 train-phase2:
-	nohup $(PYTHON) train.py --config training/rl_phase2.json \
+	nohup $(PYTHON) -u train.py --config training/rl_phase2.json \
 	    > runs/rl_phase2.log 2>&1 & echo "PID: $$!"
 
 train-phase3:
-	nohup $(PYTHON) train.py --config training/rl_phase3.json \
+	nohup $(PYTHON) -u train.py --config training/rl_phase3.json \
 	    > runs/rl_phase3.log 2>&1 & echo "PID: $$!"
 
 pipeline:
