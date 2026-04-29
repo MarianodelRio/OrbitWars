@@ -189,8 +189,9 @@ def compute_ppo_loss(
         # KL for action_type head
         kl_at = F.kl_div(
             F.log_softmax(output.action_type_logits, dim=-1),
-            F.softmax(bc_out.action_type_logits, dim=-1),
+            F.log_softmax(bc_out.action_type_logits, dim=-1),
             reduction="none",
+            log_target=True,
         ).sum(-1)  # (B, P)
         kl_at = (kl_at * is_my_planet.float()).sum() / is_my_planet.float().sum().clamp(min=1)
 
@@ -202,16 +203,18 @@ def compute_ppo_loss(
             bc_tgt_logits = bc_tgt_logits.masked_fill(~batch["valid_target_mask"], float("-inf"))
         kl_tgt = F.kl_div(
             F.log_softmax(tgt_logits, dim=-1),
-            F.softmax(bc_tgt_logits, dim=-1),
+            F.log_softmax(bc_tgt_logits, dim=-1),
             reduction="none",
+            log_target=True,
         ).sum(-1)  # (B, P)
         kl_tgt = (kl_tgt * is_launch.float()).sum() / is_launch.float().sum().clamp(min=1)
 
         # KL for amount head
         kl_amt = F.kl_div(
             F.log_softmax(output.amount_logits, dim=-1),
-            F.softmax(bc_out.amount_logits, dim=-1),
+            F.log_softmax(bc_out.amount_logits, dim=-1),
             reduction="none",
+            log_target=True,
         ).sum(-1)  # (B, P)
         kl_amt = (kl_amt * is_launch.float()).sum() / is_launch.float().sum().clamp(min=1)
 
