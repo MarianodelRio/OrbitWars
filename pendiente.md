@@ -13,6 +13,8 @@
 - En `training/trainers/il_trainer.py`: pasar `relational_tensor` al modelo en train y val loops
 - Reconstruir cache (`make cache`) y reentrenar IL (`make train`)
 - En `training/trainers/rl_trainer.py`: revertir fix temporal de `rt=None` y volver a pasar `rt` real
+- En `training/rl/ppo.py`: revertir `None` → `batch["relational_tensor"]` en los dos calls al modelo (línea ~128 y bc_model ~174)
+- **No revertir** el fix de `planet_policy_model.py` Stage 2 (pre-combined mask): es una mejora correcta independiente del relational_tensor
 
 **Nota de performance:** `_build_relational_tensor` usa doble bucle Python O(n²). Para 1500 episodios (~1.5M pasos) tardará ~90 min. Vectorizar con numpy antes de reconstruir el cache de producción.
 
