@@ -151,3 +151,70 @@ def test_kl_bc_with_peaked_bc_model():
     loss, result = compute_ppo_loss(model, batch, config, bc_model=bc_model, kl_bc_coef=0.1)
 
     assert math.isfinite(result.total_loss), f"total_loss is not finite: {result.total_loss}"
+
+
+def test_value_head_uses_v_shaped_not_v_outcome():
+    model, _ = make_model_and_sampler()
+    config = RLConfig(ppo_batch_size=4)
+    batch = make_random_batch(B=4)
+
+    model.zero_grad()
+    loss, _ = compute_ppo_loss(model, batch, config)
+    loss.backward()
+
+    # v_shaped_head is used → gradient must flow to its first linear layer
+    assert model.v_shaped_head[0].weight.grad is not None
+    assert model.v_shaped_head[0].weight.grad.abs().sum() > 0
+
+    # v_outcome_head is NOT used in the loss → no gradient
+    assert model.v_outcome_head[0].weight.grad is None
+
+
+def test_value_clip_eps_none_uses_pure_mse():
+    model, _ = make_model_and_sampler()
+    batch = make_random_batch(B=4)
+
+    # Set controlled values so clipping makes a measurable difference
+    batch["value_old"] = torch.zeros(4)
+    batch["ret"] = torch.full((4,), 2.0)
+
+    config_no_clip = RLConfig(ppo_batch_size=4, value_clip_eps=None)
+    config_clip = RLConfig(ppo_batch_size=4, value_clip_eps=0.01)
+
+    _, result_no_clip = compute_ppo_loss(model, batch, config_no_clip)
+    _, result_clip = compute_ppo_loss(model, batch, config_clip)
+
+    assert math.isfinite(result_no_clip.total_loss)
+    assert math.isfinite(result_clip.total_loss)
+    # With very tight clip and large error, losses should differ
+    assert result_no_clip.value_loss != pytest.approx(result_clip.value_loss, abs=1e-4)
+
+
+def test_value_clip_eps_active_restricts_large_correction():
+    model, _ = make_model_and_sampler()
+    batch = make_random_batch(B=4)
+
+    batch["value_old"] = torch.zeros(4)
+    batch["ret"] = torch.full((4,), 10.0)
+
+    config_no_clip = RLConfig(ppo_batch_size=4, value_clip_eps=None)
+    config_clip = RLConfig(ppo_batch_size=4, value_clip_eps=0.1)
+
+    _, result_no_clip = compute_ppo_loss(model, batch, config_no_clip)
+    _, result_clip = compute_ppo_loss(model, batch, config_clip)
+
+    assert math.isfinite(result_no_clip.total_loss)
+    assert math.isfinite(result_clip.total_loss)
+    assert result_no_clip.value_loss != pytest.approx(result_clip.value_loss, abs=1e-4)
+
+
+def test_advantage_normalization_all_same_no_nan():
+    model, _ = make_model_and_sampler()
+    config = RLConfig(ppo_batch_size=4, normalize_advantages=True)
+    batch = make_random_batch(B=4)
+
+    # All identical advantages → std=0 → normalization divides by (0 + 1e-8)
+    batch["advantage"] = torch.ones(4)
+
+    loss, result = compute_ppo_loss(model, batch, config)
+    assert math.isfinite(result.total_loss)

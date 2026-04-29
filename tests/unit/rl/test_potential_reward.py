@@ -164,3 +164,53 @@ def test_compute_events_captures_enemy_and_lose_planet():
     curr = make_obs([[0, 0, 10, 10, 1, 10, 2], [1, 1, 20, 20, 1, 10, 2]])
     result = pr._compute_events(prev, curr, player=0)
     assert result == pytest.approx(pr.r_event_capture_enemy + pr.r_event_lose_planet)
+
+
+def test_comet_capture_uses_r_event_capture_comet():
+    pr = PotentialReward()
+    # prev: planet 0 owned by player 1; curr: player 0 captures it as a comet
+    prev = make_obs([[0, 1, 10, 10, 1, 10, 2]])
+    curr = {"planets": [[0, 0, 10, 10, 1, 10, 2]], "comet_planet_ids": [0]}
+    result = pr._compute_events(prev, curr, player=0)
+    assert result == pytest.approx(pr.r_event_capture_comet)
+    assert result != pytest.approx(pr.r_event_capture_enemy)
+
+
+def test_neutral_planet_capture_no_event_reward():
+    pr = PotentialReward()
+    # prev: planet 0 neutral (owner=-1); curr: player 0 captures it (not a comet)
+    prev = make_obs([[0, -1, 10, 10, 1, 10, 2]])
+    curr = make_obs([[0, 0, 10, 10, 1, 10, 2]])
+    result = pr._compute_events(prev, curr, player=0)
+    # prev_owner = -1: not in comet_ids, and prev_owner >= 0 is False → no event
+    assert result == pytest.approx(0.0)
+
+
+def test_lost_to_neutral_no_penalty():
+    pr = PotentialReward()
+    # prev: player 0 owns planet 0; curr: planet 0 reverts to neutral (owner=-1)
+    prev = make_obs([[0, 0, 10, 10, 1, 10, 2]])
+    curr = make_obs([[0, -1, 10, 10, 1, 10, 2]])
+    result = pr._compute_events(prev, curr, player=0)
+    # curr_owner_now = -1, check is curr_owner_now >= 0 → False → no penalty
+    assert result == pytest.approx(0.0)
+
+
+def test_draw_terminal_reward_zero():
+    pr = PotentialReward()
+    # Both players have planets → neither win nor loss → terminal reward = 0
+    prev = make_obs([[0, 0, 10, 10, 1, 10, 2], [1, 1, 20, 20, 1, 10, 2]])
+    curr = make_obs([[0, 0, 10, 10, 1, 10, 2], [1, 1, 20, 20, 1, 10, 2]])
+    result = pr._compute_terminal(prev, curr, player=0)
+    assert result == pytest.approx(0.0)
+
+
+def test_comet_capture_and_lose_planet_sum():
+    pr = PotentialReward()
+    # prev: planet 0 owned by player 1, planet 1 owned by player 0
+    # curr: player 0 captures planet 0 as comet, loses planet 1 to player 1
+    prev = make_obs([[0, 1, 10, 10, 1, 10, 2], [1, 0, 20, 20, 1, 10, 2]])
+    curr = {"planets": [[0, 0, 10, 10, 1, 10, 2], [1, 1, 20, 20, 1, 10, 2]], "comet_planet_ids": [0]}
+    result = pr._compute_events(prev, curr, player=0)
+    expected = pr.r_event_capture_comet + pr.r_event_lose_planet
+    assert result == pytest.approx(expected)

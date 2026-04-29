@@ -97,6 +97,12 @@ class RLConfig:
     def from_json(cls, path: Path) -> "RLConfig":
         with open(path, "r") as f:
             data = json.load(f)
+        if "run_id" not in data or not data.get("run_id"):
+            run_name = data.get("run_name", "rl_run")
+            run_dir_parent = (
+                Path(__file__).resolve().parent.parent.parent / "runs" / run_name
+            )
+            data["run_id"] = cls._next_run_id(run_dir_parent)
         defaults = {f.name: f.default if f.default is not dataclasses.MISSING else f.default_factory() for f in dataclasses.fields(cls)}
         for f in dataclasses.fields(cls):
             if f.name not in data:
@@ -110,6 +116,23 @@ class RLConfig:
         if "device" in filtered:
             filtered["device"] = resolve_device(filtered["device"])
         return cls(**filtered)
+
+    @staticmethod
+    def _next_run_id(run_dir_parent: Path) -> str:
+        if not run_dir_parent.exists():
+            return "run_001"
+        existing = [
+            d.name for d in run_dir_parent.iterdir()
+            if d.is_dir() and d.name.startswith("run_")
+        ]
+        max_num = 0
+        for name in existing:
+            suffix = name[4:]
+            if suffix.isdigit():
+                num = int(suffix)
+                if num > max_num:
+                    max_num = num
+        return f"run_{max_num + 1:03d}"
 
     def save(self, directory: Path) -> None:
         directory = Path(directory)

@@ -63,3 +63,24 @@ def test_nearest_planet():
     c = FakePlanet(3, 0)
     result = nearest_planet(a, [b, c])
     assert result is c
+
+
+def test_eta_exact_value():
+    # fleet_speed(1) = 1.0, dist((0,0),(10,0)) = 10.0, ceil(10/1) = 10
+    src = FakePlanet(0, 0)
+    dst = FakePlanet(10, 0)
+    assert eta(src, dst, 1) == 10
+
+
+def test_fleet_speed_zero_ships():
+    assert fleet_speed(0) == pytest.approx(1.0)
+
+
+def test_fleet_speed_monotone():
+    assert fleet_speed(10) < fleet_speed(100) < fleet_speed(1000)
+
+
+def test_eta_large_fleet_faster_than_single():
+    src = FakePlanet(0, 0)
+    dst = FakePlanet(50, 0)
+    assert eta(src, dst, 100) < eta(src, dst, 1)

@@ -288,3 +288,50 @@ def test_relational_tensor_shape(make_obs):
     state = builder.from_obs(obs, player=0)
     assert state["relational_tensor"].shape == (MAX_PLANETS, MAX_PLANETS, 4)
     assert state["relational_tensor"].dtype == np.float32
+
+
+def test_relational_tensor_diagonal_zero():
+    state = _builder().from_obs(_obs(n_planets=4), player=0)
+    rt = state["relational_tensor"]
+    for i in range(4):
+        assert np.allclose(rt[i, i, :], 0.0)
+
+
+def test_relational_tensor_channel0_correct_distance():
+    # _obs places planets at (i*10, 50). Planet 0 at (0,50), planet 1 at (10,50).
+    # dist(0,1) = 10.0; channel0[0,1] = min(10/100, 1.0) = 0.1
+    obs = _obs(n_planets=2)
+    state = _builder().from_obs(obs, player=0)
+    rt = state["relational_tensor"]
+    assert rt[0, 1, 0] == pytest.approx(0.1)
+    assert 0.0 <= rt[0, 1, 0] <= 1.0
+
+
+def test_relational_tensor_channel2_same_owner_flag():
+    # _obs(n_planets=3): owner = 0 if i < 3//2+1=2 else 1
+    # i=0: owner 0, i=1: owner 0, i=2: owner 1
+    obs = _obs(n_planets=3, player=0)
+    state = _builder().from_obs(obs, player=0)
+    rt = state["relational_tensor"]
+    # Planets 0 and 1 same owner → channel2 = 1.0
+    assert rt[0, 1, 2] == pytest.approx(1.0)
+    # Planet 0 (owner 0) vs planet 2 (owner 1) → channel2 = 0.0
+    assert rt[0, 2, 2] == pytest.approx(0.0)
+
+
+def test_relational_tensor_channel3_inrange_flag():
+    # _obs places planets at (i*10, 50). Planet 0 at (0,50), planet 1 at (10,50).
+    # dist = 10 < 300 → channel3 = 1.0
+    obs = _obs(n_planets=2)
+    state = _builder().from_obs(obs, player=0)
+    rt = state["relational_tensor"]
+    assert rt[0, 1, 3] == pytest.approx(1.0)
+
+
+def test_relational_tensor_padding_slots_zero():
+    obs = _obs(n_planets=3)
+    state = _builder().from_obs(obs, player=0)
+    rt = state["relational_tensor"]
+    MAX_PLANETS = rt.shape[0]
+    assert np.allclose(rt[3:, :, :], 0.0)
+    assert np.allclose(rt[:, 3:, :], 0.0)

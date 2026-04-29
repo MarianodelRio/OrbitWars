@@ -42,7 +42,7 @@ submit-neural:
 	@set -a && . ./.env && set +a && $(PYTHON) scripts/submission/package_neural.py
 
 test:
-	$(PYTHON) -m pytest tests/ -v
+	$(PYTHON) -m pytest tests/unit/ -v
 
 test-unit:
 	$(PYTHON) -m pytest tests/unit/ -v
@@ -110,4 +110,4 @@ watch:
 	@bash scripts/watch_run.sh $(RUN)
 
 test-quick:
-	$(PYTHON) -m pytest tests/ -x -q
+	$(PYTHON) -m pytest tests/unit/ -x -q

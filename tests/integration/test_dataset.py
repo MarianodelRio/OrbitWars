@@ -12,15 +12,9 @@ from dataset.transforms.reward import BinaryOutcomeReward
 from dataset.transforms.filters import HasActionFilter, EarlyGameFilter, CompositeFilter
 from dataset.builder import SampleBuilder, TrainingSample
 
-H5_PATH = Path("/home/mariano/Desktop/OrbitWars/data/matches/scoring.bot_vs_heuristic.baseline/20260421_172107_match_0001.h5")
-_H5_AVAILABLE = H5_PATH.exists()
-
-
 @pytest.fixture(scope="module")
-def catalog():
-    if not _H5_AVAILABLE:
-        pytest.skip("H5 test data not available at H5_PATH")
-    return DataCatalog.scan(roots=[H5_PATH.parent])
+def catalog(h5_path):
+    return DataCatalog.scan(roots=[h5_path.parent])
 
 
 @pytest.fixture(scope="module")
@@ -160,4 +154,3 @@ def test_sample_builder_rl_transition_requires_reward(meta):
             action_transform=RawActionTransform(),
             mode="rl_transition",
         )
-

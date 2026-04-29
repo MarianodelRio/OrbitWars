@@ -47,3 +47,35 @@ def test_parse_obs_comet_ids():
 def test_parse_obs_initial_planets_empty():
     state = parse_obs(SAMPLE_OBS)
     assert state.initial_planets == []
+
+
+def test_parse_obs_missing_fleets_key():
+    obs = {"player": 0}
+    state = parse_obs(obs)
+    assert state.fleets == []
+
+
+def test_parse_obs_missing_angular_velocity():
+    obs = {"player": 0}
+    state = parse_obs(obs)
+    assert state.angular_velocity == pytest.approx(0.0)
+
+
+def test_parse_obs_initial_planets_nonempty():
+    obs = {
+        "player": 0,
+        "initial_planets": [
+            [0, 0, 20.0, 20.0, 2.0, 10.0, 2.0],
+            [1, 1, 80.0, 80.0, 2.0, 8.0, 2.0],
+        ],
+    }
+    state = parse_obs(obs)
+    assert len(state.initial_planets) == 2
+    assert state.initial_planets[0].id == 0
+    assert state.initial_planets[1].id == 1
+
+
+def test_parse_obs_missing_comet_planet_ids():
+    obs = {"player": 0}
+    state = parse_obs(obs)
+    assert state.comet_planet_ids == []

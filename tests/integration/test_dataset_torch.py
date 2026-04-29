@@ -13,15 +13,9 @@ from dataset.transforms.action import RawActionTransform
 from dataset.builder import SampleBuilder
 from dataset.torch_adapter import OrbitDataset, LazyOrbitDataset
 
-H5_PATH = Path("/home/mariano/Desktop/OrbitWars/data/matches/scoring.bot_vs_heuristic.baseline/20260421_172107_match_0001.h5")
-_H5_AVAILABLE = H5_PATH.exists()
-
-
 @pytest.fixture(scope="module")
-def catalog():
-    if not _H5_AVAILABLE:
-        pytest.skip("H5 test data not available at H5_PATH")
-    return DataCatalog.scan(roots=[H5_PATH.parent])
+def catalog(h5_path):
+    return DataCatalog.scan(roots=[h5_path.parent])
 
 
 @pytest.fixture(scope="module")

@@ -106,3 +106,27 @@ def test_gae_three_steps_manual():
     assert abs(steps[2].advantage - gae2) < 1e-5
     assert abs(steps[1].advantage - gae1) < 1e-5
     assert abs(steps[0].advantage - gae0) < 1e-5
+
+
+def test_gae_empty_steps_list():
+    # Must not raise any exception
+    compute_gae([], last_value=0.0, gamma=0.99, gae_lambda=0.95)
+
+
+def test_gae_all_done_no_bootstrapping():
+    # done=True → next_non_terminal=0.0 → delta = reward - value
+    s0 = make_step(reward=1.0, value=0.5, done=True)
+    s1 = make_step(reward=2.0, value=1.0, done=True)
+    compute_gae([s0, s1], last_value=99.0, gamma=0.99, gae_lambda=0.95)
+    # s1: delta = 2.0 + 0.99*99.0*0.0 - 1.0 = 1.0; gae=1.0
+    assert s1.advantage == pytest.approx(1.0)
+    # s0: delta = 1.0 + 0.99*s1.value*0.0 - 0.5 = 0.5; gae = 0.5 + 0.99*0.95*0.0*gae1 = 0.5
+    assert s0.advantage == pytest.approx(0.5)
+
+
+def test_gae_single_step_not_done_uses_last_value():
+    # done=False → next_non_terminal=1.0; next_value=last_value=0.3
+    # delta = 1.0 + 0.99*0.3*1.0 - 0.5 = 1.0 + 0.297 - 0.5 = 0.797
+    s = make_step(reward=1.0, value=0.5, done=False)
+    compute_gae([s], last_value=0.3, gamma=0.99, gae_lambda=0.95)
+    assert s.advantage == pytest.approx(0.797, abs=1e-4)
