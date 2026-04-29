@@ -154,31 +154,40 @@ class StateBuilder:
         min_enemy_eta = np.full(self.max_planets, np.inf, dtype=np.float32)
         min_friendly_eta = np.full(self.max_planets, np.inf, dtype=np.float32)
 
-        for fi in range(n_fleets):
-            fleet = fleets[fi]
-            fleet_owner = int(fleet[1])
-            fx, fy = float(fleet[2]), float(fleet[3])
-            fangle = float(fleet[4])
-            fships = float(fleet[6])
-            fships_log = math.log(1.0 + fships) / math.log(1001.0)
-            speed = 1.0 + 5.0 * (math.log(max(fships, 1.0)) / math.log(1000.0)) ** 1.5
+        if n_fleets > 0 and n_planets > 0:
+            nF = n_fleets
+            nP = n_planets
 
-            for pi in range(n_planets):
-                px, py = float(planets[pi, 2]), float(planets[pi, 3])
-                dpx, dpy = px - fx, py - fy
-                angle_to_planet = math.atan2(dpy, dpx)
-                diff = fangle - angle_to_planet
-                angle_diff = abs(math.atan2(math.sin(diff), math.cos(diff)))
-                if angle_diff < math.pi / 4:
-                    d = math.hypot(dpx, dpy)
-                    eta = d / max(speed, 1e-6)
-                    if fleet_owner == player:
-                        friendly_ship_log_sum[pi] += fships_log
-                        min_friendly_eta[pi] = min(min_friendly_eta[pi], eta)
-                    else:
-                        enemy_ship_log_sum[pi] += fships_log
-                        enemy_ship_raw_sum[pi] += fships
-                        min_enemy_eta[pi] = min(min_enemy_eta[pi], eta)
+            # Shared geometry block
+            f_xy = fleets[:nF, 2:4].astype(np.float64)          # (nF, 2)
+            p_xy = planets[:nP, 2:4].astype(np.float64)          # (nP, 2)
+            f_angle = fleets[:nF, 4].astype(np.float64)          # (nF,)
+            f_ships = fleets[:nF, 6].astype(np.float32)          # (nF,)
+            f_ships_log = (np.log(1.0 + f_ships) / math.log(1001.0)).astype(np.float32)  # (nF,)
+            f_speed = (1.0 + 5.0 * (np.log(np.maximum(f_ships, 1.0)) / math.log(1000.0)) ** 1.5).astype(np.float32)  # (nF,)
+            p_owner = planets[:nP, 1].astype(np.int32)           # (nP,)
+            is_enemy = (p_owner >= 0) & (p_owner != player)      # (nP,) bool
+            is_friendly = (p_owner == player)                     # (nP,) bool
+            f_owner_g         = fleets[:nF, 1].astype(np.int32)
+            fleet_is_enemy    = (f_owner_g != player)
+            fleet_is_friendly = (f_owner_g == player)
+
+            dp = p_xy[None, :, :] - f_xy[:, None, :]             # (nF, nP, 2)
+            angle_to_planet = np.arctan2(dp[..., 1], dp[..., 0]) # (nF, nP)
+            raw_diff = f_angle[:, None] - angle_to_planet         # (nF, nP)
+            angle_diff = np.arctan2(np.sin(raw_diff), np.cos(raw_diff))  # (nF, nP)
+            in_cone = np.abs(angle_diff) < (math.pi / 4)         # (nF, nP) bool
+            d = np.sqrt((dp ** 2).sum(axis=2)).astype(np.float32) # (nF, nP)
+            eta = d / np.maximum(f_speed[:, None], 1e-6)          # (nF, nP)
+
+            # Threat pre-pass (vectorized)
+            ec = in_cone & fleet_is_enemy[:, None]
+            fc = in_cone & fleet_is_friendly[:, None]
+            enemy_ship_log_sum[:n_planets]    = (f_ships_log[:, None] * ec).sum(axis=0)
+            enemy_ship_raw_sum[:n_planets]    = (f_ships[:, None]     * ec).sum(axis=0)
+            friendly_ship_log_sum[:n_planets] = (f_ships_log[:, None] * fc).sum(axis=0)
+            min_enemy_eta[:n_planets]         = np.where(ec, eta, np.inf).min(axis=0)
+            min_friendly_eta[:n_planets]      = np.where(fc, eta, np.inf).min(axis=0)
 
         # ---------------------------------------------------------------
         # Strategic feature pre-pass
@@ -199,16 +208,12 @@ class StateBuilder:
             n_enemy_within_30 = np.zeros(n_planets, dtype=np.float32)
             is_frontline = np.zeros(n_planets, dtype=np.float32)
 
-            for pi in range(n_planets):
-                enemy_dists = dists[pi, enemy_mask]
-                fm = friendly_mask.copy()
-                fm[pi] = False
-                friendly_dists = dists[pi, fm]
-
-                nearest_enemy_dist[pi] = enemy_dists.min() if len(enemy_dists) > 0 else 100.0
-                nearest_friendly_dist[pi] = friendly_dists.min() if len(friendly_dists) > 0 else 100.0
-                n_enemy_within_30[pi] = float((enemy_dists < 30.0).sum()) if len(enemy_dists) > 0 else 0.0
-                is_frontline[pi] = 1.0 if nearest_enemy_dist[pi] < 30.0 else 0.0
+            enemy_dists_mat    = np.where(enemy_mask[None, :],    dists, np.inf)
+            friendly_dists_mat = np.where(friendly_mask[None, :], dists, np.inf)
+            nearest_enemy_dist[:n_planets]    = enemy_dists_mat.min(axis=1)
+            nearest_friendly_dist[:n_planets] = friendly_dists_mat.min(axis=1)
+            n_enemy_within_30[:n_planets]     = (enemy_dists_mat < 30.0).sum(axis=1).astype(np.float32)
+            is_frontline[:n_planets]          = (nearest_enemy_dist[:n_planets] < 30.0).astype(np.float32)
         else:
             nearest_enemy_dist = np.zeros(self.max_planets, dtype=np.float32)
             nearest_friendly_dist = np.zeros(self.max_planets, dtype=np.float32)
@@ -275,56 +280,44 @@ class StateBuilder:
         # ---------------------------------------------------------------
         # Fill fleet slots
         # ---------------------------------------------------------------
-        planet_pos_map = {
-            int(planets[pi, 0]): (float(planets[pi, 2]), float(planets[pi, 3]), int(planets[pi, 1]))
-            for pi in range(n_planets)
-        }
+        if n_fleets > 0:
+            nF = n_fleets
+            # Use precomputed arrays if geometry block ran, else compute now
+            if n_planets == 0:
+                _f_ships     = fleets[:nF, 6].astype(np.float32)
+                _f_ships_log = (np.log(1.0 + _f_ships) / math.log(1001.0)).astype(np.float32)
+                _f_speed     = (1.0 + 5.0 * (np.log(np.maximum(_f_ships, 1.0)) / math.log(1000.0)) ** 1.5).astype(np.float32)
+                _f_angle     = fleets[:nF, 4].astype(np.float32)
+            else:
+                _f_ships     = f_ships
+                _f_ships_log = f_ships_log
+                _f_speed     = f_speed
+                _f_angle     = f_angle.astype(np.float32)
 
-        for i in range(n_fleets):
-            row = fleets[i]
-            owner = row[1]
-            x = float(row[2])
-            y = float(row[3])
-            angle = float(row[4])
-            ships = float(row[6])
+            # Simple features (indices 0–8)
+            fleet_features[:nF, 0] = (fleets[:nF, 1] == player).astype(np.float32)
+            fleet_features[:nF, 1] = (fleets[:nF, 1] != player).astype(np.float32)
+            fleet_features[:nF, 2] = fleets[:nF, 2] / 100.0
+            fleet_features[:nF, 3] = fleets[:nF, 3] / 100.0
+            fleet_features[:nF, 4] = np.sin(_f_angle)
+            fleet_features[:nF, 5] = np.cos(_f_angle)
+            fleet_features[:nF, 6] = _f_ships_log
+            fleet_features[:nF, 7] = np.hypot(fleets[:nF, 2] - 50.0, fleets[:nF, 3] - 50.0) / 50.0
+            fleet_features[:nF, 8] = np.minimum(_f_speed / 6.0, 1.0)
+            fleet_mask[:nF] = True
 
-            fleet_features[i, 0] = float(owner == player)
-            fleet_features[i, 1] = float(owner != player)
-            fleet_features[i, 2] = x / 100.0
-            fleet_features[i, 3] = y / 100.0
-            fleet_features[i, 4] = math.sin(angle)
-            fleet_features[i, 5] = math.cos(angle)
-            fleet_features[i, 6] = math.log(1.0 + ships) / math.log(1001.0)
-            fleet_features[i, 7] = math.hypot(x - 50.0, y - 50.0) / 50.0
-
-            # Fleet extended features (indices 8–12)
-            ships_f = ships
-            speed = 1.0 + 5.0 * (math.log(max(ships_f, 1.0)) / math.log(1000.0)) ** 1.5
-            fleet_features[i, 8] = min(speed / 6.0, 1.0)
-
-            fx_f, fy_f = x, y
-            fangle_f = angle
-            best_dist = None
-            best_owner = -1
-            for pid, (tx, ty, towner) in planet_pos_map.items():
-                ddx, ddy = tx - fx_f, ty - fy_f
-                ang_to = math.atan2(ddy, ddx)
-                diff = fangle_f - ang_to
-                adiff = abs(math.atan2(math.sin(diff), math.cos(diff)))
-                if adiff < math.pi / 4:
-                    d = math.hypot(ddx, ddy)
-                    if best_dist is None or d < best_dist:
-                        best_dist = d
-                        best_owner = towner
-
-            if best_dist is not None:
-                fleet_features[i, 9] = min(best_dist / 100.0, 1.0)
-                fleet_features[i, 10] = min((best_dist / max(speed, 1e-6)) / 50.0, 1.0)
-                fleet_features[i, 11] = float(best_owner == player)
-                fleet_features[i, 12] = float(best_owner >= 0 and best_owner != player)
+            # Best-target features (indices 9–12)
+            if n_planets > 0:
+                d_in_cone  = np.where(in_cone, d, np.inf)
+                best_dist_arr  = d_in_cone.min(axis=1)
+                best_idx   = np.argmin(d_in_cone, axis=1)
+                has_target = np.isfinite(best_dist_arr)
+                best_owner = p_owner[best_idx]
+                fleet_features[:nF, 9]  = np.where(has_target, np.minimum(best_dist_arr / 100.0, 1.0), 0.0)
+                fleet_features[:nF, 10] = np.where(has_target, np.minimum(best_dist_arr / np.maximum(_f_speed, 1e-6) / 50.0, 1.0), 0.0)
+                fleet_features[:nF, 11] = np.where(has_target, (best_owner == player).astype(np.float32), 0.0)
+                fleet_features[:nF, 12] = np.where(has_target, ((best_owner >= 0) & (best_owner != player)).astype(np.float32), 0.0)
             # indices 13–15 remain 0.0 (reserved)
-
-            fleet_mask[i] = True
 
         # ---------------------------------------------------------------
         # Compute global features
@@ -352,34 +345,52 @@ class StateBuilder:
         # index 4: centered turn
         global_features[4] = (turn - 250.0) / 250.0
 
+        # index 5–8: vectorized planet-based global features
+        if n_planets > 0:
+            ships_g        = planets[:n_planets, 5].astype(np.float32)
+            owners_g       = planets[:n_planets, 1].astype(np.int32)
+            prod_g         = planets[:n_planets, 6].astype(np.float32)
+            my_mask_g      = (owners_g == player)
+            enemy_mask_g   = (owners_g >= 0) & (owners_g != player)
+            neutral_mask_g = (owners_g == -1)
+            total_ships_g  = max(float(ships_g.sum()), 1.0)
+        else:
+            ships_g        = np.empty(0, dtype=np.float32)
+            owners_g       = np.empty(0, dtype=np.int32)
+            prod_g         = np.empty(0, dtype=np.float32)
+            my_mask_g      = np.empty(0, dtype=bool)
+            enemy_mask_g   = np.empty(0, dtype=bool)
+            neutral_mask_g = np.empty(0, dtype=bool)
+            total_ships_g  = 1.0
+
         # index 5: enemy_max_ship_share
-        total_ships_g = max(sum(float(p[5]) for p in planets[:n_planets]), 1.0)
-        enemy_owners = set(int(p[1]) for p in planets[:n_planets] if int(p[1]) >= 0 and int(p[1]) != player)
-        if enemy_owners:
+        enemy_unique = np.unique(owners_g[enemy_mask_g]) if enemy_mask_g.any() else np.empty(0, dtype=np.int32)
+        if len(enemy_unique) > 0:
             global_features[5] = max(
-                sum(float(p[5]) for p in planets[:n_planets] if int(p[1]) == eo) / total_ships_g
-                for eo in enemy_owners
+                float(ships_g[owners_g == eo].sum()) / total_ships_g
+                for eo in enemy_unique
             )
 
         # index 6: neutral_share
-        neutral_ships = sum(float(p[5]) for p in planets[:n_planets] if int(p[1]) == -1)
-        global_features[6] = neutral_ships / total_ships_g
+        global_features[6] = float(ships_g[neutral_mask_g].sum()) / total_ships_g
 
         # index 7: my_production_share
-        total_prod_g = max(sum(float(p[6]) for p in planets[:n_planets]), 1.0)
-        my_prod_g = sum(float(p[6]) for p in planets[:n_planets] if int(p[1]) == player)
-        global_features[7] = my_prod_g / total_prod_g
+        total_prod_g = max(float(prod_g.sum()), 1.0)
+        global_features[7] = float(prod_g[my_mask_g].sum()) / total_prod_g
 
         # index 8: enemy_max_planet_share
         total_planets_g = max(n_planets, 1)
-        if enemy_owners:
+        if len(enemy_unique) > 0:
             global_features[8] = max(
-                sum(1 for p in planets[:n_planets] if int(p[1]) == eo) / total_planets_g
-                for eo in enemy_owners
+                float((owners_g == eo).sum()) / total_planets_g
+                for eo in enemy_unique
             )
 
         # index 9: n_my_fleets / 200
-        n_my_fleets = sum(1 for fi in range(n_fleets) if int(fleets[fi, 1]) == player)
+        if n_fleets > 0:
+            n_my_fleets = int((fleets[:n_fleets, 1] == player).sum())
+        else:
+            n_my_fleets = 0
         global_features[9] = min(n_my_fleets / 200.0, 1.0)
 
         # index 10: n_enemy_fleets / 200
@@ -398,8 +409,8 @@ class StateBuilder:
         global_features[14] = 1.0 if turn >= 350 else 0.0
 
         # index 15: my_eliminated
-        my_planet_count = sum(1 for p in planets[:n_planets] if int(p[1]) == player)
-        my_fleet_count = sum(1 for fi in range(n_fleets) if int(fleets[fi, 1]) == player)
+        my_planet_count = int(my_mask_g.sum()) if n_planets > 0 else 0
+        my_fleet_count = n_my_fleets
         global_features[15] = 1.0 if (my_planet_count == 0 and my_fleet_count == 0) else 0.0
 
         # ---------------------------------------------------------------
