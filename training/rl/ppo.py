@@ -218,11 +218,14 @@ def compute_ppo_loss(
         if "valid_target_mask" in batch:
             tgt_logits = tgt_logits.masked_fill(~batch["valid_target_mask"], float("-inf"))
             bc_tgt_logits = bc_tgt_logits.masked_fill(~batch["valid_target_mask"], float("-inf"))
-        kl_tgt = F.kl_div(
-            F.log_softmax(tgt_logits, dim=-1),
-            F.log_softmax(bc_tgt_logits, dim=-1),
-            reduction="none",
-            log_target=True,
+        kl_tgt = torch.nan_to_num(
+            F.kl_div(
+                F.log_softmax(tgt_logits, dim=-1),
+                F.log_softmax(bc_tgt_logits, dim=-1),
+                reduction="none",
+                log_target=True,
+            ),
+            nan=0.0,
         ).sum(-1)  # (B, P)
         kl_tgt = (kl_tgt * is_launch.float()).sum() / is_launch.float().sum().clamp(min=1)
 
@@ -247,7 +250,8 @@ def compute_ppo_loss(
 
     # Diagnostics (detached)
     with torch.no_grad():
-        approx_kl = (-log_ratio).mean().item()
+        finite_lr_mask = torch.isfinite(log_ratio)
+        approx_kl = (-log_ratio[finite_lr_mask]).mean().item() if finite_lr_mask.any() else 0.0
         clip_fraction = ((ratio - 1.0).abs() > config.clip_eps).float().mean().item()
         var_ret = ret.var()
         explained_variance = (
