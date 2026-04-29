@@ -212,6 +212,32 @@ class RolloutBuffer:
                 device=device,
             )
 
+            # Assemble LSTM hidden states (h_n / c_n)
+            # Stored shape per step: (1, 1, G); squeeze to (G,), stack to (B, G),
+            # then unsqueeze(1) -> (B, 1, G) so PPO can permute to (1, B, G).
+            _h_tensors = [s.h_n for s in batch_steps]
+            _c_tensors = [s.c_n for s in batch_steps]
+            _has_state = any(t is not None for t in _h_tensors)
+            if _has_state:
+                # Infer hidden size G from first non-None entry
+                _ref_h = next(t for t in _h_tensors if t is not None)
+                _G = _ref_h.shape[-1]
+                _h_list = [
+                    t.squeeze(0).squeeze(0) if t is not None
+                    else torch.zeros(_G)
+                    for t in _h_tensors
+                ]
+                _c_list = [
+                    t.squeeze(0).squeeze(0) if t is not None
+                    else torch.zeros(_G)
+                    for t in _c_tensors
+                ]
+                batch_h_n = torch.stack(_h_list, dim=0).unsqueeze(1).to(device)  # (B, 1, G)
+                batch_c_n = torch.stack(_c_list, dim=0).unsqueeze(1).to(device)  # (B, 1, G)
+            else:
+                batch_h_n = None
+                batch_c_n = None
+
             batches.append({
                 "planet_features": planet_features,
                 "fleet_features": fleet_features,
@@ -228,6 +254,8 @@ class RolloutBuffer:
                 "value_old": value_old,
                 "advantage": advantage,
                 "ret": ret,
+                "h_n": batch_h_n,
+                "c_n": batch_c_n,
             })
 
         return batches

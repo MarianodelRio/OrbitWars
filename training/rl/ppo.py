@@ -131,7 +131,13 @@ def compute_ppo_loss(
         advantage = (advantage - advantage.mean()) / (advantage.std() + 1e-8)
 
     rt = batch.get("relational_tensor")
-    output, _ = model(planet_features, fleet_features, fleet_mask, global_features, planet_mask, rt)
+    h_n = batch.get("h_n")
+    c_n = batch.get("c_n")
+    if h_n is not None and c_n is not None:
+        hidden_state = (h_n.permute(1, 0, 2), c_n.permute(1, 0, 2))
+    else:
+        hidden_state = None
+    output, _ = model(planet_features, fleet_features, fleet_mask, global_features, planet_mask, rt, hidden_state)
 
     # Batched log-prob and per-head entropy
     new_log_prob, at_ent, tgt_ent, amt_ent = _batched_log_prob_and_entropy(
@@ -144,18 +150,29 @@ def compute_ppo_loss(
     )
 
     # Policy loss
-    ratio = torch.exp(new_log_prob - log_prob_old)
+    log_ratio = (new_log_prob - log_prob_old).clamp(-20.0, 20.0)
+    ratio = torch.exp(log_ratio)
     surr1 = ratio * advantage
     surr2 = torch.clamp(ratio, 1.0 - config.clip_eps, 1.0 + config.clip_eps) * advantage
-    policy_loss = -torch.min(surr1, surr2).mean()
+    raw_policy = -torch.min(surr1, surr2)
+    finite_mask_pol = torch.isfinite(raw_policy)
+    if finite_mask_pol.any():
+        policy_loss = raw_policy[finite_mask_pol].mean()
+    else:
+        policy_loss = torch.zeros(1, requires_grad=True, device=raw_policy.device).squeeze()
 
     # Value loss (clipped)
     value_pred = output.v_shaped.squeeze(-1).squeeze(-1)  # (B,)
     v_clipped = value_old + torch.clamp(value_pred - value_old, -config.clip_eps, config.clip_eps)
-    value_loss = 0.5 * torch.max(
+    v_errs = 0.5 * torch.max(
         (value_pred - ret) ** 2,
         (v_clipped - ret) ** 2,
-    ).mean()
+    )
+    finite_mask_val = torch.isfinite(v_errs)
+    if finite_mask_val.any():
+        value_loss = v_errs[finite_mask_val].mean()
+    else:
+        value_loss = torch.zeros(1, requires_grad=True, device=v_errs.device).squeeze()
 
     # Per-head weighted entropy bonus
     _at_ent_mean = at_ent.mean().item()
@@ -225,9 +242,12 @@ def compute_ppo_loss(
         total_loss = total_loss + kl_bc_coef * kl_bc_total
         kl_bc_val = kl_bc_total.item()
 
+    if not torch.isfinite(total_loss):
+        total_loss = torch.zeros(1, requires_grad=True, device=total_loss.device).squeeze()
+
     # Diagnostics (detached)
     with torch.no_grad():
-        approx_kl = (log_prob_old - new_log_prob).mean().item()
+        approx_kl = (-log_ratio).mean().item()
         clip_fraction = ((ratio - 1.0).abs() > config.clip_eps).float().mean().item()
         var_ret = ret.var()
         explained_variance = (

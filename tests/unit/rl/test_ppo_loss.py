@@ -134,3 +134,20 @@ def test_no_nan_with_peaked_logits():
     assert math.isfinite(result.entropy_amount) and result.entropy_amount >= 0, (
         f"entropy_amount invalid: {result.entropy_amount}"
     )
+
+
+def test_kl_bc_with_peaked_bc_model():
+    model, _ = make_model_and_sampler()
+    bc_model, _ = make_model_and_sampler()
+    config = RLConfig(ppo_batch_size=4)
+    batch = make_random_batch(B=4)
+
+    # Force peaked logits on both action_type and amount heads of bc_model
+    with torch.no_grad():
+        bc_model.action_type_head.bias[0] = 88.0
+        bc_model.action_type_head.bias[1] = -88.0
+        bc_model.action_type_head.bias[2] = -88.0
+
+    loss, result = compute_ppo_loss(model, batch, config, bc_model=bc_model, kl_bc_coef=0.1)
+
+    assert math.isfinite(result.total_loss), f"total_loss is not finite: {result.total_loss}"
