@@ -241,9 +241,9 @@ class ILTrainer(BaseTrainer):
             import h5py as _h5py_val
             with _h5py_val.File(cache_path, "r") as _f_val:
                 _sv = int(_f_val.attrs.get("schema_version", 0))
-                if _sv != 3:
+                if _sv != 4:
                     raise RuntimeError(
-                        f"Cache schema version mismatch: expected 3, got {_sv}. "
+                        f"Cache schema version mismatch: expected 4, got {_sv}. "
                         f"Delete {cache_path} and rebuild."
                     )
 
@@ -375,12 +375,16 @@ class ILTrainer(BaseTrainer):
             for batch in train_loader:
                 optimizer.zero_grad()
                 with torch.autocast(device_type=device.type, dtype=_amp_dtype, enabled=_use_amp):
+                    rt = batch.get("relational_tensor")
+                    if rt is not None:
+                        rt = rt.to(device)
                     output, _ = self.model(
                         batch["planet_features"].to(device),
                         batch["fleet_features"].to(device),
                         batch["fleet_mask"].to(device),
                         batch["global_features"].to(device),
                         batch["planet_mask"].to(device),
+                        rt,
                     )
                     B, N = batch["action_types"].shape
                     assert N == self.model.config.max_planets, f"Batch planet dim {N} != model max_planets {self.model.config.max_planets}"
@@ -432,12 +436,16 @@ class ILTrainer(BaseTrainer):
 
             with torch.no_grad():
                 for batch in val_loader:
+                    rt = batch.get("relational_tensor")
+                    if rt is not None:
+                        rt = rt.to(device)
                     output, _ = self.model(
                         batch["planet_features"].to(device),
                         batch["fleet_features"].to(device),
                         batch["fleet_mask"].to(device),
                         batch["global_features"].to(device),
                         batch["planet_mask"].to(device),
+                        rt,
                     )
                     B, N = batch["action_types"].shape
                     assert N == self.model.config.max_planets, f"Batch planet dim {N} != model max_planets {self.model.config.max_planets}"

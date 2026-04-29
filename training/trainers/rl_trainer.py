@@ -181,14 +181,12 @@ class RLTrainer:
             fm = torch.tensor(state["fleet_mask"], dtype=torch.bool).unsqueeze(0).to(device)
             gf = torch.tensor(state["global_features"], dtype=torch.float32).unsqueeze(0).to(device)
             pm = torch.tensor(state["planet_mask"], dtype=torch.bool).unsqueeze(0).to(device)
+            rt = torch.tensor(state["relational_tensor"], dtype=torch.float32).unsqueeze(0).to(device)
 
             rl_masks = sampler.build_masks(state["context"], device=device)
 
             with torch.no_grad():
-                # relational_tensor not passed: rel_proj was never trained during IL
-                # (not in HDF5 cache), so its random weights cause NaN. Pass None
-                # to use the same code path as IL. (tracked as technical debt — fix: Option B)
-                output, new_hidden = self.model(pf, ff, fm, gf, pm, None, hidden)
+                output, new_hidden = self.model(pf, ff, fm, gf, pm, rt, hidden)
                 output_squeezed = PlanetPolicyOutput(
                     action_type_logits=output.action_type_logits.squeeze(0),
                     target_logits=output.target_logits.squeeze(0),
@@ -256,8 +254,9 @@ class RLTrainer:
             fm = torch.tensor(state["fleet_mask"], dtype=torch.bool).unsqueeze(0).to(device)
             gf = torch.tensor(state["global_features"], dtype=torch.float32).unsqueeze(0).to(device)
             pm = torch.tensor(state["planet_mask"], dtype=torch.bool).unsqueeze(0).to(device)
+            rt = torch.tensor(state["relational_tensor"], dtype=torch.float32).unsqueeze(0).to(device)
             with torch.no_grad():
-                output, _ = self.model(pf, ff, fm, gf, pm, None, hidden)
+                output, _ = self.model(pf, ff, fm, gf, pm, rt, hidden)
                 last_value = output.v_shaped.squeeze().item()
 
         self._buffer.compute_gae(last_value, cfg.gamma, cfg.gae_lambda)
@@ -288,7 +287,11 @@ class RLTrainer:
                     il_ab = il_batch["amount_bins"].to(device)
 
                     self.model.train()
-                    il_output, _ = self.model(il_pf, il_ff, il_fm, il_gf, il_pm)
+                    self._optimizer.zero_grad()
+                    il_rt = il_batch.get("relational_tensor")
+                    if il_rt is not None:
+                        il_rt = il_rt.to(device)
+                    il_output, _ = self.model(il_pf, il_ff, il_fm, il_gf, il_pm, il_rt)
                     # CE losses (flat, ignore_index=-1)
                     B_il, P_il = il_at.shape
                     il_loss = (
@@ -296,9 +299,13 @@ class RLTrainer:
                         + _safe_ce(il_output.target_logits.view(B_il * P_il, -1), il_ti.view(-1))
                         + _safe_ce(il_output.amount_logits.view(B_il * P_il, -1), il_ab.view(-1))
                     )
-                    self._optimizer.zero_grad()
+                    if not torch.isfinite(il_loss):
+                        continue
                     il_loss.backward()
-                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), cfg.max_grad_norm)
+                    il_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), cfg.max_grad_norm)
+                    if not torch.isfinite(il_norm):
+                        self._optimizer.zero_grad()
+                        continue
                     self._optimizer.step()
                     # Skip PPO loss for this minibatch
                     continue
@@ -309,8 +316,13 @@ class RLTrainer:
                     bc_model=self._bc_model,
                     kl_bc_coef=kl_bc_coef,
                 )
+                if not torch.isfinite(loss):
+                    continue
                 loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), cfg.max_grad_norm)
+                total_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), cfg.max_grad_norm)
+                if not torch.isfinite(total_norm):
+                    self._optimizer.zero_grad()
+                    continue
                 self._optimizer.step()
                 all_results.append(result)
 

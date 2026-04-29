@@ -261,6 +261,8 @@ class PlanetPolicyModel(nn.Module):
                 .reshape(B * self.config.n_heads, P, P)
             )
             combined_mask = rel_bias + kp_expanded       # (B*n_heads, P, P)
+            all_non_finite = (~combined_mask.isfinite()).all(dim=-1, keepdim=True)
+            combined_mask = combined_mask.masked_fill(all_non_finite, 0.0)
             for block in self.planet_blocks:
                 x = block(x, attn_mask=combined_mask, key_padding_mask=None)
         else:

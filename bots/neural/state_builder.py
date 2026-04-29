@@ -103,28 +103,21 @@ class StateBuilder:
         tensor = np.zeros((self.max_planets, self.max_planets, 4), dtype=np.float32)
         if n_planets == 0:
             return tensor
-        sun_x, sun_y = 50.0, 50.0
-        for i in range(n_planets):
-            xi, yi = float(planets[i, 2]), float(planets[i, 3])
-            oi = int(planets[i, 1])
-            for j in range(n_planets):
-                if i == j:
-                    continue
-                xj, yj = float(planets[j, 2]), float(planets[j, 3])
-                oj = int(planets[j, 1])
-                d = math.hypot(xj - xi, yj - yi)
-                # channel 0: distance_norm
-                tensor[i, j, 0] = min(d / 100.0, 1.0)
-                # channel 1: angle_diff/pi
-                angle_to_j = math.atan2(yj - yi, xj - xi)
-                angle_from_sun = math.atan2(yi - sun_y, xi - sun_x)
-                adiff = angle_to_j - angle_from_sun
-                adiff = math.atan2(math.sin(adiff), math.cos(adiff))
-                tensor[i, j, 1] = abs(adiff) / math.pi
-                # channel 2: same_owner
-                tensor[i, j, 2] = 1.0 if oi == oj else 0.0
-                # channel 3: is_reachable_in_50_turns (max speed ~6.0)
-                tensor[i, j, 3] = 1.0 if d <= 6.0 * 50.0 else 0.0
+        pts = planets[:n_planets, 2:4].astype(np.float64)
+        owners = planets[:n_planets, 1].astype(np.int32)
+        diff = pts[:, np.newaxis] - pts[np.newaxis, :]
+        dists = np.sqrt((diff ** 2).sum(-1)).astype(np.float32)
+        angles_to_j = np.arctan2(diff[..., 1], diff[..., 0])
+        angles_from_sun = np.arctan2(pts[:, 1] - 50.0, pts[:, 0] - 50.0)
+        adiff = angles_to_j - angles_from_sun[:, np.newaxis]
+        adiff = np.arctan2(np.sin(adiff), np.cos(adiff))
+        same_owner = (owners[:, np.newaxis] == owners[np.newaxis, :]).astype(np.float32)
+        idx = np.arange(n_planets)
+        tensor[:n_planets, :n_planets, 0] = np.minimum(dists / 100.0, 1.0)
+        tensor[:n_planets, :n_planets, 1] = np.abs(adiff).astype(np.float32) / np.pi
+        tensor[:n_planets, :n_planets, 2] = same_owner
+        tensor[:n_planets, :n_planets, 3] = (dists <= 300.0).astype(np.float32)
+        tensor[idx, idx, :] = 0.0
         return tensor
 
     def _build(

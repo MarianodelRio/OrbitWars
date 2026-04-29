@@ -306,8 +306,16 @@ def build_il_cache(
         ds_sd  = f.create_dataset("score_diff",       shape=(0,),        maxshape=(None,),        dtype="float32", chunks=(chunk_size,))
         ds_o10 = f.create_dataset("ownership_10",     shape=(0, P),      maxshape=(None, P),      dtype="int8",    chunks=(chunk_size, P))
         ds_ol  = f.create_dataset("opponent_launch",  shape=(0, P),      maxshape=(None, P),      dtype="uint8",   chunks=(chunk_size, P))
+        ds_rt  = f.create_dataset(
+            "relational_tensor",
+            shape=(0, P, P, 4),
+            maxshape=(None, P, P, 4),
+            dtype="float32",
+            chunks=(chunk_size, P, P, 4),
+            **compress,
+        )
 
-        all_datasets = [ds_pf, ds_ff, ds_fm, ds_gf, ds_pm, ds_at, ds_ti, ds_ab, ds_vt, ds_ei, ds_sd, ds_o10, ds_ol]
+        all_datasets = [ds_pf, ds_ff, ds_fm, ds_gf, ds_pm, ds_at, ds_ti, ds_ab, ds_vt, ds_ei, ds_sd, ds_o10, ds_ol, ds_rt]
         offset = 0
         n_episodes = len(catalog.episodes)
 
@@ -333,7 +341,7 @@ def build_il_cache(
 
             batch_pf, batch_ff, batch_fm, batch_gf, batch_pm = [], [], [], [], []
             batch_at, batch_ti, batch_ab, batch_vt, batch_ei = [], [], [], [], []
-            batch_sd, batch_o10, batch_ol = [], [], []
+            batch_sd, batch_o10, batch_ol, batch_rt = [], [], [], []
 
             with h5py.File(meta.path, "r") as _ep_f:
                 ep_angular_velocity = float(_ep_f.attrs.get("angular_velocity", 0.0))
@@ -368,6 +376,7 @@ def build_il_cache(
                         batch_sd.append(np.float32(0.0))
                         batch_o10.append(np.zeros(P, dtype=np.int8))
                         batch_ol.append(np.zeros(P, dtype=np.uint8))
+                        batch_rt.append(state["relational_tensor"])
 
             if not batch_pf:
                 continue
@@ -387,6 +396,7 @@ def build_il_cache(
                 np.array(batch_sd, dtype=np.float32),
                 np.stack(batch_o10),
                 np.stack(batch_ol),
+                np.stack(batch_rt),
             ]
             for ds, arr in zip(all_datasets, arrays):
                 ds.resize(offset + n, axis=0)
@@ -409,7 +419,7 @@ def build_il_cache(
         f.attrs["perspective"] = perspective
         f.attrs["n_episodes"] = n_episodes
         f.attrs["n_samples"] = offset
-        f.attrs["schema_version"] = 3
+        f.attrs["schema_version"] = 4
         f.attrs["Dp"] = Dp
         f.attrs["Df"] = Df
         f.attrs["Dg"] = Dg
@@ -444,9 +454,9 @@ class PrecomputedILDataset(Dataset):
         with h5py.File(self._path, "r") as f:
             self._n_h5 = int(f["planet_features"].shape[0])
             sv = int(f.attrs.get("schema_version", 0))
-            if sv != 3:
+            if sv != 4:
                 raise ValueError(
-                    f"Cache schema version mismatch: expected 3, got {sv}. "
+                    f"Cache schema version mismatch: expected 4, got {sv}. "
                     f"Delete {self._path} and rebuild with build_il_cache."
                 )
             self._at_counts = np.array(f.attrs.get("at_counts", [1.0, 1.0]), dtype=np.float32)
@@ -504,9 +514,10 @@ class PrecomputedILDataset(Dataset):
             "target_idxs":     h5["target_idxs"][start:end],      # (B, P) int8
             "amount_bins":     h5["amount_bins"][start:end],       # (B, P) int8
             "value_target":    h5["value_target"][start:end],      # (B,) float32
-            "score_diff":      h5["score_diff"][start:end],
-            "ownership_10":    h5["ownership_10"][start:end],
-            "opponent_launch": h5["opponent_launch"][start:end],
+            "score_diff":         h5["score_diff"][start:end],
+            "ownership_10":       h5["ownership_10"][start:end],
+            "opponent_launch":    h5["opponent_launch"][start:end],
+            "relational_tensor":  h5["relational_tensor"][start:end],
         }
         self._buf_start = start
         self._buf_end = end
@@ -531,9 +542,10 @@ class PrecomputedILDataset(Dataset):
             "target_idxs":     torch.from_numpy(b["target_idxs"][loc].astype(np.int64)),
             "amount_bins":     torch.from_numpy(b["amount_bins"][loc].astype(np.int64)),
             "value_target":    torch.tensor(float(b["value_target"][loc]), dtype=torch.float32),
-            "score_diff":      torch.tensor(float(b["score_diff"][loc]), dtype=torch.float32),
-            "ownership_10":    torch.from_numpy(b["ownership_10"][loc].astype(np.int64)),
-            "opponent_launch": torch.from_numpy(b["opponent_launch"][loc].astype(np.float32)),
+            "score_diff":         torch.tensor(float(b["score_diff"][loc]), dtype=torch.float32),
+            "ownership_10":       torch.from_numpy(b["ownership_10"][loc].astype(np.int64)),
+            "opponent_launch":    torch.from_numpy(b["opponent_launch"][loc].astype(np.float32)),
+            "relational_tensor":  torch.from_numpy(b["relational_tensor"][loc].copy()),
         }
 
 
