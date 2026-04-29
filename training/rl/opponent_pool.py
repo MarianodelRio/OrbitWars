@@ -64,16 +64,19 @@ class OpponentPool:
             # Remove from _entries by identity
             self._entries = [e for e in self._entries if e is not oldest]
 
-    def sample(self, rng: random.Random | None = None, self_play_prob: float = 0.0, current_model_fn=None):
+    def sample(self, rng: random.Random | None = None, self_play_prob: float = 0.0, current_model_fn=None, return_name: bool = False):
         if current_model_fn is not None and random.random() < self_play_prob:
-            return current_model_fn
+            fn = current_model_fn
+            return (fn, "self") if return_name else fn
         if not self._entries:
-            return lambda obs, config=None: []
+            fn = lambda obs, config=None: []
+            return (fn, "empty") if return_name else fn
         if rng is not None:
             entry = rng.choice(self._entries)
         else:
             entry = random.choice(self._entries)
-        return entry.get_agent()
+        fn = entry.get_agent()
+        return (fn, entry.name) if return_name else fn
 
     def size(self) -> int:
         return len(self._entries)

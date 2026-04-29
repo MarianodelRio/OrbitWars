@@ -21,6 +21,12 @@ class PPOLossResult:
     clip_fraction: float
     explained_variance: float
     kl_bc: float = 0.0
+    entropy_action_type: float = 0.0
+    entropy_target: float = 0.0
+    entropy_amount: float = 0.0
+    kl_bc_action_type: float = 0.0
+    kl_bc_target: float = 0.0
+    kl_bc_amount: float = 0.0
 
 
 def _batched_log_prob_and_entropy(
@@ -152,6 +158,9 @@ def compute_ppo_loss(
     ).mean()
 
     # Per-head weighted entropy bonus
+    _at_ent_mean = at_ent.mean().item()
+    _tgt_ent_mean = tgt_ent.mean().item()
+    _amt_ent_mean = amt_ent.mean().item()
     entropy_bonus = (
         config.entropy_coef_action_type * at_ent.mean()
         + config.entropy_coef_target * tgt_ent.mean()
@@ -162,6 +171,9 @@ def compute_ppo_loss(
     total_loss = policy_loss + config.vf_coef * value_loss - entropy_bonus
 
     # KL-to-BC regularization
+    _kl_at_val = 0.0
+    _kl_tgt_val = 0.0
+    _kl_amt_val = 0.0
     kl_bc_val = 0.0
     if bc_model is not None and kl_bc_coef > 0.0:
         is_my_planet = my_planet_mask           # (B, P)
@@ -203,6 +215,9 @@ def compute_ppo_loss(
         ).sum(-1)  # (B, P)
         kl_amt = (kl_amt * is_launch.float()).sum() / is_launch.float().sum().clamp(min=1)
 
+        _kl_at_val = kl_at.item()
+        _kl_tgt_val = kl_tgt.item()
+        _kl_amt_val = kl_amt.item()
         kl_bc_total = kl_at + kl_tgt + kl_amt
         total_loss = total_loss + kl_bc_coef * kl_bc_total
         kl_bc_val = kl_bc_total.item()
@@ -227,6 +242,12 @@ def compute_ppo_loss(
         clip_fraction=clip_fraction,
         explained_variance=explained_variance,
         kl_bc=kl_bc_val,
+        entropy_action_type=_at_ent_mean,
+        entropy_target=_tgt_ent_mean,
+        entropy_amount=_amt_ent_mean,
+        kl_bc_action_type=_kl_at_val,
+        kl_bc_target=_kl_tgt_val,
+        kl_bc_amount=_kl_amt_val,
     )
 
     return total_loss, result

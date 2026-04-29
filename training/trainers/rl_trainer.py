@@ -6,6 +6,22 @@ import dataclasses
 
 import torch
 
+try:
+    from tqdm import tqdm
+except ImportError:
+    class tqdm:
+        def __init__(self, iterable=None, **kw):
+            self._it = iter(iterable) if iterable is not None else iter([])
+        def __iter__(self): return self._it
+        def __next__(self): return next(self._it)
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+        def update(self, n=1): pass
+        def set_postfix(self, **kw): pass
+        def close(self): pass
+        @staticmethod
+        def write(s, **kw): print(s)
+
 from training.utils.rl_config import RLConfig
 from training.utils.checkpointing import CheckpointManager
 from training.utils.rl_metrics import RLMetricsLogger
@@ -160,20 +176,27 @@ class RLTrainer:
         torch.manual_seed(cfg.seed)
         self._best_mean_winrate = 0.0
 
-    def _collect_rollout(self) -> None:
+    def _collect_rollout(self, iteration: int = 0) -> None:
         cfg = self.config
         device = cfg.device
         buffer = self._buffer
         env = self._env
         sampler = self._sampler
 
-        opponent_fn = self._pool.sample(
+        opponent_fn, _opp_name = self._pool.sample(
             self_play_prob=self.config.self_play_prob,
             current_model_fn=self._current_model_as_agent(),
+            return_name=True,
         )
         env.set_opponent(opponent_fn)
         state, info = env.reset()
         hidden = None
+
+        _launches_total = 0
+        _step_count = 0
+        _explore_active = getattr(self._reward_fn, "_explore_active", False)
+
+        _rollout_bar = tqdm(total=cfg.n_rollout_steps, desc=f"Rollout iter={iteration}", leave=True)
 
         while not buffer.is_full():
             pf = torch.tensor(state["planet_features"], dtype=torch.float32).unsqueeze(0).to(device)
@@ -204,12 +227,16 @@ class RLTrainer:
                 )
 
             next_state, reward, done, step_info = env.step(sample_result.game_actions)
+            _step_count += 1
+            _launches_total += len(sample_result.game_actions)
+            _rollout_bar.update(1)
 
             if step_info.get("error") and step_info.get("error_reason") == "env_error":
                 # Reset and continue
-                opponent_fn = self._pool.sample(
+                opponent_fn, _opp_name = self._pool.sample(
                     self_play_prob=self.config.self_play_prob,
                     current_model_fn=self._current_model_as_agent(),
+                    return_name=True,
                 )
                 env.set_opponent(opponent_fn)
                 state, _ = env.reset()
@@ -235,15 +262,22 @@ class RLTrainer:
             hidden = new_hidden
 
             if done:
-                opponent_fn = self._pool.sample(
+                opponent_fn, _opp_name = self._pool.sample(
                     self_play_prob=self.config.self_play_prob,
                     current_model_fn=self._current_model_as_agent(),
+                    return_name=True,
                 )
                 env.set_opponent(opponent_fn)
                 state, _ = env.reset()
                 hidden = None
             else:
                 state = next_state
+
+        _rollout_bar.close()
+        self._last_opp_name = _opp_name
+        self._last_launches_total = _launches_total
+        self._last_rollout_step_count = _step_count
+        self._last_explore_active = _explore_active
 
         # Bootstrap value for last step
         if self._buffer._steps and self._buffer._steps[-1].done:
@@ -268,7 +302,11 @@ class RLTrainer:
         all_results = []
         for _epoch in range(cfg.ppo_epochs):
             batches = self._buffer.get_batches(cfg.ppo_batch_size, cfg.device)
-            for batch in batches:
+            _epoch_results = []
+            _epoch_norm_total = 0.0
+            _epoch_norm_count = 0
+            _ppo_bar = tqdm(batches, desc=f"PPO e{_epoch+1}/{cfg.ppo_epochs} iter={iteration}", leave=True, unit="b")
+            for batch in _ppo_bar:
                 # IL distillation: replace ~il_distill_ratio fraction of minibatches with CE batches
                 if self._il_loader is not None and random.random() < cfg.il_distill_ratio:
                     try:
@@ -325,6 +363,40 @@ class RLTrainer:
                     continue
                 self._optimizer.step()
                 all_results.append(result)
+                _epoch_results.append(result)
+                _epoch_norm_total += total_norm.item()
+                _epoch_norm_count += 1
+
+            # Update bar postfix with per-epoch averages
+            if _epoch_results:
+                _en = len(_epoch_results)
+                _avg_pi   = sum(r.policy_loss for r in _epoch_results) / _en
+                _avg_vl   = sum(r.value_loss for r in _epoch_results) / _en
+                _avg_kl   = sum(r.approx_kl for r in _epoch_results) / _en
+                _avg_cl   = sum(r.clip_fraction for r in _epoch_results) / _en
+                _avg_norm = _epoch_norm_total / max(_epoch_norm_count, 1)
+                _avg_h_at  = sum(r.entropy_action_type for r in _epoch_results) / _en
+                _avg_h_tgt = sum(r.entropy_target for r in _epoch_results) / _en
+                _avg_h_amt = sum(r.entropy_amount for r in _epoch_results) / _en
+                _avg_kl_at  = sum(r.kl_bc_action_type for r in _epoch_results) / _en
+                _avg_kl_tgt = sum(r.kl_bc_target for r in _epoch_results) / _en
+                _avg_kl_amt = sum(r.kl_bc_amount for r in _epoch_results) / _en
+                _postfix = dict(
+                    pi=f"{_avg_pi:.4f}",
+                    V=f"{_avg_vl:.4f}",
+                    KL=f"{_avg_kl:.4f}",
+                    clip=f"{_avg_cl:.3f}",
+                    norm=f"{_avg_norm:.2f}",
+                    H_at=f"{_avg_h_at:.3f}",
+                    H_tgt=f"{_avg_h_tgt:.3f}",
+                    H_amt=f"{_avg_h_amt:.3f}",
+                )
+                if _avg_kl_at != 0.0 or _avg_kl_tgt != 0.0 or _avg_kl_amt != 0.0:
+                    _postfix["KL_at"]  = f"{_avg_kl_at:.3f}"
+                    _postfix["KL_tgt"] = f"{_avg_kl_tgt:.3f}"
+                    _postfix["KL_amt"] = f"{_avg_kl_amt:.3f}"
+                _ppo_bar.set_postfix(**_postfix)
+            _ppo_bar.close()
 
         if not all_results:
             return PPOLossResult(
@@ -348,6 +420,12 @@ class RLTrainer:
             clip_fraction=sum(r.clip_fraction for r in all_results) / n,
             explained_variance=sum(r.explained_variance for r in all_results) / n,
             kl_bc=sum(r.kl_bc for r in all_results) / n,
+            entropy_action_type=sum(r.entropy_action_type for r in all_results) / n,
+            entropy_target=sum(r.entropy_target for r in all_results) / n,
+            entropy_amount=sum(r.entropy_amount for r in all_results) / n,
+            kl_bc_action_type=sum(r.kl_bc_action_type for r in all_results) / n,
+            kl_bc_target=sum(r.kl_bc_target for r in all_results) / n,
+            kl_bc_amount=sum(r.kl_bc_amount for r in all_results) / n,
         )
         return avg
 
@@ -391,7 +469,8 @@ class RLTrainer:
         for iteration in range(start_iter, cfg.total_iterations + 1):
             self._reward_fn.notify_iteration(iteration)
             self.model.train()
-            self._collect_rollout()
+            tqdm.write(f"\n[RLTrainer] ── iter {iteration}/{cfg.total_iterations} ──")
+            self._collect_rollout(iteration=iteration)
 
             kl_bc_coef = _compute_kl_bc_coef(iteration, cfg)
             avg_ppo_result = self._ppo_update(iteration=iteration, kl_bc_coef=kl_bc_coef)
@@ -408,6 +487,7 @@ class RLTrainer:
                     self.model, self.state_builder, self.codec, iteration
                 )
                 self._pool.add_snapshot(path, iteration)
+                tqdm.write(f"  [snapshot] saved → {path}  pool_size={self._pool.size()}  snapshots={len(self._pool._snapshot_entries)}")
 
             if iteration % cfg.save_every == 0:
                 metrics = {
@@ -446,6 +526,16 @@ class RLTrainer:
                     mean_winrate = sum(
                         v.get("win_rate", 0.0) for v in eval_results.values()
                     ) / max(len(eval_results), 1)
+                    tqdm.write(f"  [eval] iter={iteration} mean_win_rate={mean_winrate:.3f}")
+                    for _opp, _res in eval_results.items():
+                        tqdm.write(
+                            f"    vs {_opp}: win={_res.get('win_rate', 0.0):.2f} "
+                            f"draw={_res.get('draw_rate', 0.0):.2f} "
+                            f"loss={_res.get('loss_rate', 0.0):.2f} "
+                            f"score_neural={_res.get('avg_score_neural', 0.0):.1f} "
+                            f"score_opp={_res.get('avg_score_opponent', 0.0):.1f} "
+                            f"avg_game_length={_res.get('avg_game_length', 'N/A')}"
+                        )
                     if mean_winrate > self._best_mean_winrate:
                         self._best_mean_winrate = mean_winrate
                         best_metrics = {
@@ -464,14 +554,23 @@ class RLTrainer:
                             is_best_winrate=True,
                         )
                 except Exception as e:
-                    print(f"[RLTrainer] Eval failed at iteration {iteration}: {e}")
+                    tqdm.write(f"[RLTrainer] Eval failed at iteration {iteration}: {e}")
 
-            if iteration % 10 == 0:
-                print(
-                    f"[RLTrainer] iter={iteration}/{cfg.total_iterations} "
-                    f"policy_loss={avg_ppo_result.policy_loss:.4f} "
-                    f"value_loss={avg_ppo_result.value_loss:.4f} "
-                    f"entropy={avg_ppo_result.entropy:.4f} "
-                    f"episodes={buffer_stats['n_episodes']} "
-                    f"mean_ep_reward={buffer_stats['mean_ep_reward']:.4f}"
-                )
+            tqdm.write(
+                f"  [summary] iter={iteration}/{cfg.total_iterations} "
+                f"opp={getattr(self, '_last_opp_name', '?')} "
+                f"π={avg_ppo_result.policy_loss:.4f} V={avg_ppo_result.value_loss:.4f} "
+                f"H={avg_ppo_result.entropy:.4f} KL={avg_ppo_result.approx_kl:.4f} "
+                f"clip={avg_ppo_result.clip_fraction:.3f} kl_bc={avg_ppo_result.kl_bc:.4f}\n"
+                f"         episodes={buffer_stats['n_episodes']} "
+                f"win_rate={buffer_stats.get('win_rate', 0.0):.2f} "
+                f"mean_ep_len={buffer_stats.get('mean_ep_length', 0.0):.1f} "
+                f"mean_ep_rew={buffer_stats['mean_ep_reward']:.4f} "
+                f"shaped={buffer_stats.get('mean_shaped_reward', 0.0):.4f} "
+                f"terminal={buffer_stats.get('mean_terminal_reward', 0.0):.4f}\n"
+                f"         adv_mean={buffer_stats.get('adv_mean', 0.0):.4f} "
+                f"adv_std={buffer_stats.get('adv_std', 0.0):.4f} "
+                f"ret_mean={buffer_stats.get('ret_mean', 0.0):.4f} "
+                f"ret_std={buffer_stats.get('ret_std', 0.0):.4f} "
+                f"mean_value={buffer_stats.get('mean_value', 0.0):.4f}"
+            )

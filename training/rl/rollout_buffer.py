@@ -54,18 +54,77 @@ class RolloutBuffer:
         total_ep_reward = 0.0
         current_ep_reward = 0.0
 
+        # Extended tracking
+        n_wins = 0
+        n_losses = 0
+        n_draws = 0
+        total_shaped = 0.0
+        total_terminal = 0.0
+        total_steps_ep = 0
+        current_ep_shaped = 0.0
+        current_ep_terminal = 0.0
+        current_ep_steps = 0
+
         for step in self._steps:
             current_ep_reward += step.shaped_reward + step.terminal_reward
+            current_ep_shaped += step.shaped_reward
+            current_ep_terminal += step.terminal_reward
+            current_ep_steps += 1
             if step.done:
                 n_episodes += 1
                 total_ep_reward += current_ep_reward
+                total_shaped += current_ep_shaped
+                total_terminal += current_ep_terminal
+                total_steps_ep += current_ep_steps
+                if step.terminal_reward > 0:
+                    n_wins += 1
+                elif step.terminal_reward < 0:
+                    n_losses += 1
+                else:
+                    n_draws += 1
                 current_ep_reward = 0.0
+                current_ep_shaped = 0.0
+                current_ep_terminal = 0.0
+                current_ep_steps = 0
 
-        mean_ep_reward = total_ep_reward / n_episodes if n_episodes > 0 else 0.0
+        _n_ep = max(n_episodes, 1)
+        mean_ep_reward = total_ep_reward / _n_ep
+        win_rate = n_wins / _n_ep
+        mean_ep_length = total_steps_ep / _n_ep
+        mean_shaped_reward = total_shaped / _n_ep
+        mean_terminal_reward = total_terminal / _n_ep
+
+        all_advantages = [s.advantage for s in self._steps]
+        all_returns = [s.ret for s in self._steps]
+        all_values = [s.value for s in self._steps]
+        _n_steps = max(len(self._steps), 1)
+
+        adv_mean = sum(all_advantages) / _n_steps
+        adv_var = sum((a - adv_mean) ** 2 for a in all_advantages) / _n_steps
+        adv_std = adv_var ** 0.5
+
+        ret_mean = sum(all_returns) / _n_steps
+        ret_var = sum((r - ret_mean) ** 2 for r in all_returns) / _n_steps
+        ret_std = ret_var ** 0.5
+
+        mean_value = sum(all_values) / _n_steps
+
         return {
             "n_episodes": n_episodes,
             "mean_ep_reward": mean_ep_reward,
             "total_steps": len(self._steps),
+            "n_wins": n_wins,
+            "n_losses": n_losses,
+            "n_draws": n_draws,
+            "win_rate": win_rate,
+            "mean_ep_length": mean_ep_length,
+            "mean_shaped_reward": mean_shaped_reward,
+            "mean_terminal_reward": mean_terminal_reward,
+            "adv_mean": adv_mean,
+            "adv_std": adv_std,
+            "ret_mean": ret_mean,
+            "ret_std": ret_std,
+            "mean_value": mean_value,
         }
 
     def get_batches(self, batch_size: int, device: str) -> list[dict]:

@@ -52,6 +52,7 @@ class Evaluator:
                 "loss_rate": wins_opp / n,
                 "avg_score_neural": raw["avg_ships"][0],
                 "avg_score_opponent": raw["avg_ships"][1],
+                "avg_game_length": raw.get("avg_game_length", 0.0),
                 "timestamp": datetime.utcnow().isoformat(),
             }
 

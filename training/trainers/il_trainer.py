@@ -8,6 +8,22 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
+try:
+    from tqdm import tqdm
+except ImportError:
+    class tqdm:
+        def __init__(self, iterable=None, **kw):
+            self._it = iter(iterable) if iterable is not None else iter([])
+        def __iter__(self): return self._it
+        def __next__(self): return next(self._it)
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+        def update(self, n=1): pass
+        def set_postfix(self, **kw): pass
+        def close(self): pass
+        @staticmethod
+        def write(s, **kw): print(s)
+
 
 def _safe_ce(
     logits: torch.Tensor,
@@ -371,8 +387,17 @@ class ILTrainer(BaseTrainer):
             self.model.train()
             train_loss_total = 0.0
             train_steps = 0
+            _sum_at = 0.0
+            _sum_tgt = 0.0
+            _sum_amt = 0.0
+            _sum_val = 0.0
+            _sum_sdiff = 0.0
+            _sum_own = 0.0
+            _sum_opp = 0.0
+            _grad_norm_total = 0.0
 
-            for batch in train_loader:
+            _pbar = tqdm(train_loader, desc=f"Epoch {epoch:>2}/{self.config.epochs}", leave=True, unit="b", dynamic_ncols=True)
+            for batch in _pbar:
                 optimizer.zero_grad()
                 with torch.autocast(device_type=device.type, dtype=_amp_dtype, enabled=_use_amp):
                     rt = batch.get("relational_tensor")
@@ -395,12 +420,11 @@ class ILTrainer(BaseTrainer):
                     tgt_logits = output.target_logits.view(B * N, N)
                     amt_logits = output.amount_logits.view(B * N, self.model.config.n_amount_bins)
                     value_labels = batch["value_target"].to(device).float()
-                    loss = (
-                        action_type_loss_weight * _safe_ce(at_logits, at_flat, ce_override=ce_action_type)
-                        + _safe_ce(tgt_logits, tgt_flat)
-                        + _safe_ce(amt_logits, amt_flat, ce_override=ce_amount)
-                        + value_loss_weight * mse_loss(output.v_outcome.squeeze(-1), value_labels)
-                    )
+                    _loss_at  = action_type_loss_weight * _safe_ce(at_logits, at_flat, ce_override=ce_action_type)
+                    _loss_tgt = _safe_ce(tgt_logits, tgt_flat)
+                    _loss_amt = _safe_ce(amt_logits, amt_flat, ce_override=ce_amount)
+                    _loss_val = value_loss_weight * mse_loss(output.v_outcome.squeeze(-1), value_labels)
+                    loss = _loss_at + _loss_tgt + _loss_amt + _loss_val
                     # score_diff MSE
                     _sd_loss = mse_loss(
                         output.v_score_diff.squeeze(-1),
@@ -413,19 +437,30 @@ class ILTrainer(BaseTrainer):
                     _ol_logits  = output.aux_opponent_launch.view(B * N)
                     _ol_labels  = batch["opponent_launch"].to(device).view(B * N).float()
 
+                    _loss_aux_own = aux_ownership_weight       * _safe_bce(_o10_logits, _o10_labels, _pm_flat)
+                    _loss_aux_opp = aux_opponent_launch_weight * _safe_bce(_ol_logits,  _ol_labels,  _pm_flat)
                     loss = (loss
-                        + score_diff_loss_weight     * _sd_loss
-                        + aux_ownership_weight       * _safe_bce(_o10_logits, _o10_labels, _pm_flat)
-                        + aux_opponent_launch_weight * _safe_bce(_ol_logits,  _ol_labels,  _pm_flat))
+                        + score_diff_loss_weight * _sd_loss
+                        + _loss_aux_own
+                        + _loss_aux_opp)
 
                 _scaler.scale(loss).backward()
                 _scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                _grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
                 _scaler.step(optimizer)
                 _scaler.update()
 
                 train_loss_total += loss.item()
                 train_steps += 1
+                _sum_at    += _loss_at.item()
+                _sum_tgt   += _loss_tgt.item()
+                _sum_amt   += _loss_amt.item()
+                _sum_val   += _loss_val.item()
+                _sum_sdiff += _sd_loss.item()
+                _sum_own   += _loss_aux_own.item()
+                _sum_opp   += _loss_aux_opp.item()
+                _grad_norm_total += _grad_norm.item()
+                _pbar.set_postfix(loss=f"{train_loss_total/max(train_steps,1):.4f}")
 
             train_loss = train_loss_total / max(train_steps, 1)
 
@@ -435,7 +470,7 @@ class ILTrainer(BaseTrainer):
             val_steps = 0
 
             with torch.no_grad():
-                for batch in val_loader:
+                for batch in tqdm(val_loader, desc=" val", leave=False):
                     rt = batch.get("relational_tensor")
                     if rt is not None:
                         rt = rt.to(device)
@@ -495,8 +530,6 @@ class ILTrainer(BaseTrainer):
             self._log_train({"epoch": epoch, "loss": train_loss})
             self._log_val({"epoch": epoch, "loss": val_loss})
 
-            print(f"[Epoch {epoch}/{self.config.epochs}] train_loss={train_loss:.4f}  val_loss={val_loss:.4f}")
-
             # e. Check best
             is_best = val_loss < best_val_loss
             if is_best:
@@ -505,10 +538,32 @@ class ILTrainer(BaseTrainer):
             else:
                 epochs_no_improve += 1
 
+            # Compute per-epoch averages for display
+            _n = max(train_steps, 1)
+            avg_train  = train_loss_total / _n
+            avg_val    = val_loss
+            avg_norm   = _grad_norm_total / _n
+            avg_at     = _sum_at    / _n
+            avg_tgt    = _sum_tgt   / _n
+            avg_amt    = _sum_amt   / _n
+            avg_val_loss = _sum_val / _n
+            avg_sdiff  = _sum_sdiff / _n
+            avg_own    = _sum_own   / _n
+            avg_opp    = _sum_opp   / _n
+            current_lr = optimizer.param_groups[0]["lr"]
+            tqdm.write(
+                f"Epoch {epoch:>2}/{self.config.epochs} train={avg_train:.4f} val={avg_val:.4f} "
+                f"lr={current_lr:.2e} norm={avg_norm:.2f}{'  ★best' if is_best else ''}"
+            )
+            tqdm.write(
+                f"  sub-losses: at={avg_at:.3f} tgt={avg_tgt:.3f} amt={avg_amt:.3f} "
+                f"val={avg_val_loss:.3f} sdiff={avg_sdiff:.3f} own={avg_own:.3f} opp={avg_opp:.3f}"
+            )
+
             # Early stopping
             _patience = getattr(self.config, "early_stopping_patience", 0)
             if _patience > 0 and epochs_no_improve >= _patience:
-                print(f"[ILTrainer] Early stopping at epoch {epoch} (no improvement for {_patience} epochs)")
+                tqdm.write(f"[ILTrainer] Early stopping at epoch {epoch} (no improvement for {_patience} epochs)")
                 self._save_checkpoint(
                     epoch,
                     {"train_loss": train_loss, "val_loss": val_loss},
@@ -533,7 +588,14 @@ class ILTrainer(BaseTrainer):
                 )
                 results = evaluator.run(epoch=epoch)
                 for opp, res in results.items():
-                    print(f"  [Eval vs {opp}] win_rate={res.get('win_rate'):.2f}")
+                    tqdm.write(
+                        f"  [Eval vs {opp}] win_rate={res.get('win_rate', 0.0):.2f} "
+                        f"draw_rate={res.get('draw_rate', 0.0):.2f} "
+                        f"loss_rate={res.get('loss_rate', 0.0):.2f} "
+                        f"avg_score_neural={res.get('avg_score_neural', 0.0):.1f} "
+                        f"avg_score_opp={res.get('avg_score_opponent', 0.0):.1f} "
+                        f"avg_game_length={res.get('avg_game_length', 'N/A')}"
+                    )
                 if self.config.eval_opponents:
                     _primary_opp = self.config.eval_opponents[0]
                     _wr = results.get(_primary_opp, {}).get("win_rate", None)
@@ -544,5 +606,5 @@ class ILTrainer(BaseTrainer):
                         else:
                             _win_rate_no_improve += 1
                         if _patience > 0 and _win_rate_no_improve >= _patience:
-                            print(f"Early stopping: win rate did not improve for {_patience} evaluations.")
+                            tqdm.write(f"Early stopping: win rate did not improve for {_patience} evaluations.")
                             break
