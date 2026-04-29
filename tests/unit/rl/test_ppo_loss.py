@@ -1,5 +1,7 @@
 """Unit tests for PPO loss computation."""
 
+import math
+
 import numpy as np
 import pytest
 import torch
@@ -108,3 +110,27 @@ def test_ppo_loss_result_fields():
     assert hasattr(result, "approx_kl")
     assert hasattr(result, "clip_fraction")
     assert hasattr(result, "explained_variance")
+
+
+def test_no_nan_with_peaked_logits():
+    model, sampler = make_model_and_sampler()
+    config = RLConfig(ppo_batch_size=4)
+    batch = make_random_batch(B=4)
+
+    # Force peaked action_type distribution: class 0 wins with probability ≈ 1.0
+    # in float32, so that other classes have softmax probability that rounds to 0.0.
+    with torch.no_grad():
+        bias = model.action_type_head.bias  # shape (3,)
+        bias[0] = 88.0
+        bias[1] = -88.0
+        bias[2] = -88.0
+
+    _, result = compute_ppo_loss(model, batch, config)
+
+    assert math.isfinite(result.total_loss), f"total_loss is not finite: {result.total_loss}"
+    assert math.isfinite(result.entropy_action_type) and result.entropy_action_type >= 0, (
+        f"entropy_action_type invalid: {result.entropy_action_type}"
+    )
+    assert math.isfinite(result.entropy_amount) and result.entropy_amount >= 0, (
+        f"entropy_amount invalid: {result.entropy_amount}"
+    )

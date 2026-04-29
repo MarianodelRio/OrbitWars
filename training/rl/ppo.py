@@ -48,7 +48,7 @@ def _batched_log_prob_and_entropy(
     at_clamped = action_types.clamp(min=0)  # (B, P)
     at_lp = at_log_probs_all.gather(-1, at_clamped.unsqueeze(-1)).squeeze(-1)  # (B, P)
     at_probs = F.softmax(at_logits, dim=-1)
-    at_entropy = -(at_probs * at_log_probs_all).sum(-1)  # (B, P)
+    at_entropy = -(at_probs * at_log_probs_all.clamp(min=-1e9)).sum(-1)  # (B, P)
 
     # --- Target ---
     tgt_logits = output.target_logits.clone()  # (B, P, P)
@@ -77,7 +77,7 @@ def _batched_log_prob_and_entropy(
     amt_clamped = amount_bins.clamp(min=0)
     amt_lp = amt_log_probs_all.gather(-1, amt_clamped.unsqueeze(-1)).squeeze(-1)  # (B, P)
     amt_probs = F.softmax(amt_logits, dim=-1)
-    amt_entropy = -(amt_probs * amt_log_probs_all).sum(-1)  # (B, P)
+    amt_entropy = -(amt_probs * amt_log_probs_all.clamp(min=-1e9)).sum(-1)  # (B, P)
 
     # --- Combine ---
     # Only accumulate for my-planet slots where action_types != -1 (not padding)
