@@ -14,11 +14,12 @@
     "dropout": 0.1, "lstm_bypass": false
   },
 
-  "n_rollout_steps": 2048,
+  "n_rollout_steps": 8192,
   "steps_per_episode": 500,
-  "ppo_epochs": 4,
-  "ppo_batch_size": 256,
+  "ppo_epochs": 5,
+  "ppo_batch_size": 512,
   "clip_eps": 0.2,
+  "value_clip_eps": null,
   "vf_coef": 0.5,
   "max_grad_norm": 0.5,
   "lr": 0.0003,
@@ -42,8 +43,8 @@
   "r_explore": 0.0,
   "explore_iterations": 0,
 
-  "entropy_coef_action_type": 0.02,
-  "entropy_coef_target": 0.005,
+  "entropy_coef_action_type": 0.01,
+  "entropy_coef_target": 0.01,
   "entropy_coef_amount": 0.005,
 
   "self_play_prob": 0.4,
@@ -60,7 +61,7 @@
   "il_data_cache_path": "",
   "il_distill_ratio": 0.0,
 
-  "eval_every": 50,
+  "eval_every": 25,
   "n_eval_matches": 20,
   "eval_opponents": ["heuristic.baseline", "heuristic.sniper", "scoring.bot", "heuristic.oracle_sniper"],
   "save_every": 50

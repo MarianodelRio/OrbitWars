@@ -14,11 +14,12 @@
     "dropout": 0.1, "lstm_bypass": false
   },
 
-  "n_rollout_steps": 2048,
+  "n_rollout_steps": 8192,
   "steps_per_episode": 500,
-  "ppo_epochs": 4,
-  "ppo_batch_size": 256,
+  "ppo_epochs": 5,
+  "ppo_batch_size": 512,
   "clip_eps": 0.2,
+  "value_clip_eps": null,
   "vf_coef": 0.5,
   "max_grad_norm": 0.5,
   "lr": 0.0001,
@@ -42,16 +43,16 @@
   "r_explore": 0.0,
   "explore_iterations": 0,
 
-  "entropy_coef_action_type": 0.02,
+  "entropy_coef_action_type": 0.005,
   "entropy_coef_target": 0.005,
-  "entropy_coef_amount": 0.005,
+  "entropy_coef_amount": 0.002,
 
   "self_play_prob": 0.7,
   "heuristic_opponents": [
     "bots.heuristic.oracle_sniper:agent_fn"
   ],
   "frozen_checkpoint": "runs/rl_phase2_mixed/run_001/checkpoints/rl_last.pt",
-  "max_snapshots": 8,
+  "max_snapshots": 6,
   "snapshot_every": 30,
 
   "bc_policy_path": "",
