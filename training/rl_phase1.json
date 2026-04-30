@@ -14,15 +14,15 @@
     "dropout": 0.1, "lstm_bypass": false
   },
 
-  "n_rollout_steps": 4096,
+  "n_rollout_steps": 8192,
   "steps_per_episode": 500,
-  "ppo_epochs": 4,
+  "ppo_epochs": 2,
   "ppo_batch_size": 256,
   "clip_eps": 0.2,
-  "value_clip_eps": null,
+  "value_clip_eps": 0.2,
   "vf_coef": 0.5,
-  "max_grad_norm": 0.5,
-  "lr": 0.0003,
+  "max_grad_norm": 1.0,
+  "lr": 0.0002,
   "lr_schedule": "cosine",
   "normalize_advantages": true,
 
@@ -35,17 +35,17 @@
   "reward_lambda": 0.5,
   "r_terminal_win": 10.0,
   "r_terminal_loss": -10.0,
-  "r_terminal_margin_coef": 5.0,
+  "r_terminal_margin_coef": 2.0,
   "r_event_capture_enemy": 0.5,
   "r_event_capture_comet": 0.2,
   "r_event_eliminate_opponent": 1.0,
   "r_event_lose_planet": -0.3,
-  "r_explore": 0.01,
+  "r_explore": 0.03,
   "explore_iterations": 200,
 
-  "entropy_coef_action_type": 0.01,
-  "entropy_coef_target": 0.01,
-  "entropy_coef_amount": 0.005,
+  "entropy_coef_action_type": 0.05,
+  "entropy_coef_target": 0.03,
+  "entropy_coef_amount": 0.01,
 
   "self_play_prob": 0.0,
   "heuristic_opponents": [
@@ -59,12 +59,12 @@
   "snapshot_every": 50,
 
   "bc_policy_path": "<IL_BEST>",
-  "kl_bc_coef_start": 1.0,
-  "kl_bc_coef_end": 0.05,
-  "kl_bc_coef_decay_iters": 200,
+  "kl_bc_coef_start": 0.05,
+  "kl_bc_coef_end": 0.005,
+  "kl_bc_coef_decay_iters": 75,
 
   "il_data_cache_path": "data/cache/il_planet_policy.h5",
-  "il_distill_ratio": 0.10,
+  "il_distill_ratio": 0.0,
 
   "eval_every": 25,
   "n_eval_matches": 20,
