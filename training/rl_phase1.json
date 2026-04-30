@@ -1,5 +1,5 @@
 {
-  "run_name": "rl_phase1_anchored",
+  "run_name": "rl_phase1_anchored_v2",
   "run_id": "",
   "device": "auto",
   "seed": 42,
@@ -16,7 +16,7 @@
 
   "n_rollout_steps": 8192,
   "steps_per_episode": 500,
-  "ppo_epochs": 2,
+  "ppo_epochs": 3,
   "ppo_batch_size": 256,
   "clip_eps": 0.2,
   "value_clip_eps": 0.2,
@@ -40,12 +40,12 @@
   "r_event_capture_comet": 0.2,
   "r_event_eliminate_opponent": 1.0,
   "r_event_lose_planet": -0.3,
-  "r_explore": 0.03,
+  "r_explore": 0.05,
   "explore_iterations": 200,
 
-  "entropy_coef_action_type": 0.05,
-  "entropy_coef_target": 0.03,
-  "entropy_coef_amount": 0.01,
+  "entropy_coef_action_type": 0.08,
+  "entropy_coef_target": 0.05,
+  "entropy_coef_amount": 0.02,
 
   "self_play_prob": 0.0,
   "heuristic_opponents": [
@@ -54,14 +54,14 @@
     "bots.scoring.bot:agent_fn",
     "bots.heuristic.oracle_sniper:agent_fn"
   ],
-  "frozen_checkpoint": "<IL_BEST>",
+  "frozen_checkpoint": "runs/planet_policy_il_v3/run_001/checkpoints/best.pt",
   "max_snapshots": 5,
   "snapshot_every": 50,
 
-  "bc_policy_path": "<IL_BEST>",
-  "kl_bc_coef_start": 0.05,
+  "bc_policy_path": "runs/planet_policy_il_v3/run_001/checkpoints/best.pt",
+  "kl_bc_coef_start": 0.03,
   "kl_bc_coef_end": 0.005,
-  "kl_bc_coef_decay_iters": 75,
+  "kl_bc_coef_decay_iters": 50,
 
   "il_data_cache_path": "data/cache/il_planet_policy.h5",
   "il_distill_ratio": 0.0,
