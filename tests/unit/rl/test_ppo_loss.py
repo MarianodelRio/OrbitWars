@@ -194,25 +194,6 @@ def test_value_clip_eps_none_uses_pure_mse():
     assert result_no_clip.value_loss != pytest.approx(result_clip.value_loss, abs=1e-4)
 
 
-def test_value_clip_eps_active_restricts_large_correction():
-    model, _ = make_model_and_sampler()
-    batch = make_random_batch(B=4)
-
-    batch["value_old"] = torch.zeros(4)
-    batch["ret"] = torch.full((4,), 10.0)
-
-    model.eval()
-
-    config_no_clip = RLConfig(ppo_batch_size=4, value_clip_eps=None)
-    config_clip = RLConfig(ppo_batch_size=4, value_clip_eps=0.1)
-
-    _, result_no_clip = compute_ppo_loss(model, batch, config_no_clip)
-    _, result_clip = compute_ppo_loss(model, batch, config_clip)
-
-    assert math.isfinite(result_no_clip.total_loss)
-    assert math.isfinite(result_clip.total_loss)
-    assert result_no_clip.value_loss != pytest.approx(result_clip.value_loss, abs=1e-4)
-
 
 def test_advantage_normalization_all_same_no_nan():
     model, _ = make_model_and_sampler()
