@@ -122,7 +122,7 @@ def agent(obs, config=None):
             )
             _codec = ActionCodec(n_amount_bins=_config.n_amount_bins)
         else:
-            raise ValueError(f"Unsupported model_type: {_model_type!r}")
+            raise ValueError(f"Unsupported model_type: {{_model_type!r}}")
         _bot = NeuralBot(model=_model, state_builder=_state_builder, codec=_codec, device="cpu")
     return _bot.act(obs, config)
 """
