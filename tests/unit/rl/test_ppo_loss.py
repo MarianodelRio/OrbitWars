@@ -178,6 +178,10 @@ def test_value_clip_eps_none_uses_pure_mse():
     batch["value_old"] = torch.zeros(4)
     batch["ret"] = torch.full((4,), 2.0)
 
+    # eval() disables dropout so both forward passes produce identical value_pred,
+    # making the comparison purely about the clipping math
+    model.eval()
+
     config_no_clip = RLConfig(ppo_batch_size=4, value_clip_eps=None)
     config_clip = RLConfig(ppo_batch_size=4, value_clip_eps=0.01)
 
@@ -196,6 +200,8 @@ def test_value_clip_eps_active_restricts_large_correction():
 
     batch["value_old"] = torch.zeros(4)
     batch["ret"] = torch.full((4,), 10.0)
+
+    model.eval()
 
     config_no_clip = RLConfig(ppo_batch_size=4, value_clip_eps=None)
     config_clip = RLConfig(ppo_batch_size=4, value_clip_eps=0.1)
