@@ -3,7 +3,7 @@
   "run_id": "run_001",
   "device": "auto",
   "seed": 42,
-  "total_iterations": 1200,
+  "total_iterations": 500,
 
   "model_config": {
     "Dp": 24, "Df": 16, "Dg": 16,
