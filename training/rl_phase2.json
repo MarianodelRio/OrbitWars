@@ -1,9 +1,9 @@
 {
   "run_name": "rl_phase2_mixed",
-  "run_id": "",
+  "run_id": "run_001",
   "device": "auto",
   "seed": 42,
-  "total_iterations": 500,
+  "total_iterations": 1200,
 
   "model_config": {
     "Dp": 24, "Df": 16, "Dg": 16,
@@ -58,7 +58,7 @@
   "max_snapshots": 5,
   "snapshot_every": 50,
 
-  "bc_policy_path": "<IL_BEST>",
+  "bc_policy_path": "",
   "kl_bc_coef_start": 0.3,
   "kl_bc_coef_end": 0.05,
   "kl_bc_coef_decay_iters": 150,
