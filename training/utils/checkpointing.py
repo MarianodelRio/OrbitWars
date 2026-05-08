@@ -13,6 +13,14 @@ from bots.neural.bot import NeuralBot
 from bots.neural.planet_policy_model import PlanetPolicyModel
 
 
+def _clean_state_dict(sd: dict) -> dict:
+    """Strip torch.compile's '_orig_mod.' prefix so checkpoints are portable."""
+    return {
+        (k[len("_orig_mod."):] if k.startswith("_orig_mod.") else k): v
+        for k, v in sd.items()
+    }
+
+
 class CheckpointManager:
     def __init__(self, run_dir: Path) -> None:
         self._run_dir = run_dir
@@ -36,7 +44,7 @@ class CheckpointManager:
             "model_type": model_type,
             "config": config_to_save,
             "config_dict": config_to_save,
-            "state_dict": model.state_dict(),
+            "state_dict": _clean_state_dict(model.state_dict()),
             "max_planets": state_builder.max_planets,
             "max_fleets": state_builder.max_fleets,
             "n_amount_bins": codec.n_amount_bins,
@@ -80,7 +88,7 @@ class CheckpointManager:
         checkpoint = {
             "model_type": model_type,
             "config": config_to_save,
-            "state_dict": model.state_dict(),
+            "state_dict": _clean_state_dict(model.state_dict()),
             "max_planets": state_builder.max_planets,
             "max_fleets": state_builder.max_fleets,
             "n_amount_bins": codec.n_amount_bins,
@@ -116,7 +124,7 @@ class CheckpointManager:
         checkpoint = {
             "model_type": model_type,
             "config": config_to_save,
-            "state_dict": model.state_dict(),
+            "state_dict": _clean_state_dict(model.state_dict()),
             "optimizer_state_dict": optimizer.state_dict(),
             "lr_scheduler_state_dict": lr_scheduler.state_dict() if lr_scheduler is not None else None,
             "max_planets": state_builder.max_planets,

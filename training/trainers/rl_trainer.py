@@ -245,10 +245,16 @@ class RLTrainer:
         """
         import random
         if random.random() < self.config.self_play_prob:
+            # Strip torch.compile's _orig_mod. prefix so workers can load into uncompiled models
+            raw_sd = self.model.state_dict()
+            state_dict = {
+                (k[len("_orig_mod."):] if k.startswith("_orig_mod.") else k): v.detach().cpu()
+                for k, v in raw_sd.items()
+            }
             spec = {
                 "kind": "live_state",
                 "model_config": dataclasses.asdict(self.model.config),
-                "state_dict": {k: v.detach().cpu() for k, v in self.model.state_dict().items()},
+                "state_dict": state_dict,
             }
             return spec, "self"
         if not self._pool._entries:
