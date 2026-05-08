@@ -11,6 +11,7 @@ from pathlib import Path
 class PoolEntry:
     name: str
     loader: object  # callable: () -> agent_fn
+    spec: dict | None = None  # picklable representation for vec env workers
 
     def __post_init__(self):
         self._agent = None
@@ -32,7 +33,11 @@ class OpponentPool:
             from game.env.evaluator import load_agent
             return load_agent(agent_fn_path)
 
-        entry = PoolEntry(name=name, loader=loader)
+        entry = PoolEntry(
+            name=name,
+            loader=loader,
+            spec={"kind": "heuristic", "fn_path": agent_fn_path},
+        )
         self._entries.append(entry)
 
     def add_frozen_checkpoint(self, path: str) -> None:
@@ -42,7 +47,11 @@ class OpponentPool:
             bot = NeuralBot.load(path)
             return make_agent(bot)
 
-        entry = PoolEntry(name=f"frozen:{path}", loader=loader)
+        entry = PoolEntry(
+            name=f"frozen:{path}",
+            loader=loader,
+            spec={"kind": "checkpoint", "ckpt_path": str(path)},
+        )
         self._entries.append(entry)
 
     def add_snapshot(self, path: Path, iteration: int) -> None:
@@ -54,7 +63,11 @@ class OpponentPool:
             bot = NeuralBot.load(path_str)
             return make_agent(bot)
 
-        entry = PoolEntry(name=f"snapshot:{iteration}", loader=loader)
+        entry = PoolEntry(
+            name=f"snapshot:{iteration}",
+            loader=loader,
+            spec={"kind": "checkpoint", "ckpt_path": path_str},
+        )
         self._entries.append(entry)
         self._snapshot_entries.append(entry)
 

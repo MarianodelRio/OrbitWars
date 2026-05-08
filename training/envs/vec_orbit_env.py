@@ -13,7 +13,45 @@ import multiprocessing as mp
 from typing import Any, Callable
 
 
-def _worker(conn, env_factory: Callable[[], Any], opponent_fn) -> None:
+def _materialize_opponent_spec(spec):
+    """Build an opponent agent_fn from a picklable spec inside a worker.
+
+    Specs are dicts with one of these forms:
+      {"kind": "heuristic", "fn_path": "module.path:agent_fn"}
+      {"kind": "checkpoint", "ckpt_path": "/path/to/ckpt.pt"}
+      {"kind": "live_state", "model_config": {...}, "state_dict": {...}}
+
+    Neural opponents run on CPU inside the worker.
+    """
+    if spec is None:
+        return None
+    kind = spec.get("kind")
+    if kind == "heuristic":
+        from game.env.evaluator import load_agent
+        return load_agent(spec["fn_path"])
+    if kind == "checkpoint":
+        from bots.neural.bot import NeuralBot
+        from bots.interface import make_agent
+        bot = NeuralBot.load(spec["ckpt_path"], device="cpu")
+        return make_agent(bot)
+    if kind == "live_state":
+        from bots.neural.bot import NeuralBot
+        from bots.neural.planet_policy_model import PlanetPolicyModel, PlanetPolicyConfig
+        from bots.neural.state_builder import StateBuilder
+        from bots.neural.action_codec import ActionCodec
+        from bots.interface import make_agent
+        cfg = PlanetPolicyConfig(**spec["model_config"])
+        model = PlanetPolicyModel(cfg)
+        model.load_state_dict(spec["state_dict"])
+        model.eval()
+        sb = StateBuilder(max_planets=cfg.max_planets, max_fleets=cfg.max_fleets)
+        codec = ActionCodec(n_amount_bins=cfg.n_amount_bins)
+        bot = NeuralBot(model=model, state_builder=sb, codec=codec, device="cpu")
+        return make_agent(bot)
+    raise ValueError(f"Unknown opponent spec kind: {kind!r}")
+
+
+def _worker(conn, env_factory: Callable[[], Any], opponent_spec) -> None:
     """Top-level worker entry point.
 
     Receives (cmd, payload) tuples through `conn` and dispatches.
@@ -21,14 +59,17 @@ def _worker(conn, env_factory: Callable[[], Any], opponent_fn) -> None:
     """
     try:
         env = env_factory()
+        opponent_fn = _materialize_opponent_spec(opponent_spec)
         if opponent_fn is not None:
             env.set_opponent(opponent_fn)
         while True:
             cmd, payload = conn.recv()
             if cmd == "reset":
-                new_op = (payload or {}).get("opponent_fn")
-                if new_op is not None:
-                    env.set_opponent(new_op)
+                new_spec = (payload or {}).get("opponent_spec")
+                if new_spec is not None:
+                    new_fn = _materialize_opponent_spec(new_spec)
+                    if new_fn is not None:
+                        env.set_opponent(new_fn)
                 state, info = env.reset()
                 conn.send(("ok", (state, info)))
             elif cmd == "step":
@@ -64,39 +105,39 @@ class VecOrbitWarsEnv:
         self,
         n_envs: int,
         env_factory: Callable[[], Any],
-        opponent_fns: list,
+        opponent_specs: list,
     ) -> None:
         if n_envs < 1:
             raise ValueError(f"n_envs must be >= 1, got {n_envs}")
-        if len(opponent_fns) != n_envs:
+        if len(opponent_specs) != n_envs:
             raise ValueError(
-                f"opponent_fns length {len(opponent_fns)} != n_envs {n_envs}"
+                f"opponent_specs length {len(opponent_specs)} != n_envs {n_envs}"
             )
         self.n_envs = n_envs
         self._env_factory = env_factory
-        self._last_opponent_fns = list(opponent_fns)
+        self._last_opponent_specs = list(opponent_specs)
         self._conns: list = []
         self._procs: list = []
         for i in range(n_envs):
             parent_conn, child_conn = mp.Pipe(duplex=True)
             p = mp.Process(
                 target=_worker,
-                args=(child_conn, env_factory, opponent_fns[i]),
+                args=(child_conn, env_factory, opponent_specs[i]),
                 daemon=True,
             )
             p.start()
             self._conns.append(parent_conn)
             self._procs.append(p)
 
-    def reset(self, opponent_fns: list | None = None) -> list:
-        if opponent_fns is not None and len(opponent_fns) != self.n_envs:
+    def reset(self, opponent_specs: list | None = None) -> list:
+        if opponent_specs is not None and len(opponent_specs) != self.n_envs:
             raise ValueError(
-                f"opponent_fns length {len(opponent_fns)} != n_envs {self.n_envs}"
+                f"opponent_specs length {len(opponent_specs)} != n_envs {self.n_envs}"
             )
         for i, conn in enumerate(self._conns):
-            if opponent_fns is not None:
-                self._last_opponent_fns[i] = opponent_fns[i]
-            payload = {"opponent_fn": opponent_fns[i] if opponent_fns else None}
+            if opponent_specs is not None:
+                self._last_opponent_specs[i] = opponent_specs[i]
+            payload = {"opponent_spec": opponent_specs[i] if opponent_specs else None}
             conn.send(("reset", payload))
         results = []
         for i, conn in enumerate(self._conns):
@@ -153,7 +194,7 @@ class VecOrbitWarsEnv:
         parent_conn, child_conn = mp.Pipe(duplex=True)
         p = mp.Process(
             target=_worker,
-            args=(child_conn, self._env_factory, self._last_opponent_fns[i]),
+            args=(child_conn, self._env_factory, self._last_opponent_specs[i]),
             daemon=True,
         )
         p.start()

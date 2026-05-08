@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import dataclasses
 import functools
-import pickle
 
 import torch
 
@@ -178,8 +177,8 @@ class RLTrainer:
         )
 
         if cfg.n_envs > 1:
-            _init_opponent_fns = [self._sample_picklable_opponent()[0] for _ in range(cfg.n_envs)]
-            self._vec_env = VecOrbitWarsEnv(cfg.n_envs, self._vec_env_factory, _init_opponent_fns)
+            _init_opponent_specs = [self._sample_opponent_spec()[0] for _ in range(cfg.n_envs)]
+            self._vec_env = VecOrbitWarsEnv(cfg.n_envs, self._vec_env_factory, _init_opponent_specs)
             print(f"[RLTrainer] VecOrbitWarsEnv initialized n_envs={cfg.n_envs}")
 
         self._buffer = RolloutBuffer(capacity=cfg.n_rollout_steps)
@@ -236,33 +235,26 @@ class RLTrainer:
         print(f"[RLTrainer] AMP enabled={self._use_amp}  dtype={self._amp_dtype}")
         self._best_mean_winrate = 0.0
 
-    def _sample_picklable_opponent(self) -> tuple:
-        """Sample an opponent that is picklable for use in VecOrbitWarsEnv workers.
+    def _sample_opponent_spec(self) -> tuple:
+        """Sample an opponent and return (spec, name) — spec is picklable.
 
-        Falls back to the first heuristic pool entry if the sampled opponent is
-        a closure (e.g. neural snapshot) that cannot be pickled.
+        For self-play, builds a 'live_state' spec containing the current model's
+        config and state_dict. For heuristics/checkpoints/snapshots, returns the
+        spec stored on the PoolEntry. Workers materialize the spec into an
+        agent_fn (see vec_orbit_env._materialize_opponent_spec).
         """
-        fn, name = self._pool.sample(
-            self_play_prob=self.config.self_play_prob,
-            current_model_fn=self._current_model_as_agent(),
-            return_name=True,
-        )
-        try:
-            pickle.dumps(fn)
-            return (fn, name)
-        except Exception:
-            for entry in self._pool._entries:
-                try:
-                    candidate_fn = entry.get_agent()
-                    pickle.dumps(candidate_fn)
-                except Exception:
-                    continue
-                print(
-                    f"[RLTrainer] WARNING: sampled opponent '{name}' is not picklable for vec env; "
-                    f"falling back to '{entry.name}'"
-                )
-                return candidate_fn, entry.name
-            raise RuntimeError("No picklable opponents available for vec env")
+        import random
+        if random.random() < self.config.self_play_prob:
+            spec = {
+                "kind": "live_state",
+                "model_config": dataclasses.asdict(self.model.config),
+                "state_dict": {k: v.detach().cpu() for k, v in self.model.state_dict().items()},
+            }
+            return spec, "self"
+        if not self._pool._entries:
+            return None, "empty"
+        entry = random.choice(self._pool._entries)
+        return entry.spec, entry.name
 
     def _collect_rollout(self, iteration: int = 0) -> None:
         cfg = self.config
@@ -397,11 +389,11 @@ class RLTrainer:
         sampler = self._sampler
         n = cfg.n_envs
 
-        # Sample N picklable opponents and reset all envs
-        opp_pairs = [self._sample_picklable_opponent() for _ in range(n)]
-        opponent_fns = [p[0] for p in opp_pairs]
+        # Sample N opponents (as picklable specs) and reset all envs
+        opp_pairs = [self._sample_opponent_spec() for _ in range(n)]
+        opponent_specs = [p[0] for p in opp_pairs]
         self._last_opp_name = opp_pairs[-1][1]
-        current_states = vec_env.reset(opponent_fns=opponent_fns)
+        current_states = vec_env.reset(opponent_specs=opponent_specs)
         hidden = None  # will be (h_n, c_n) of shape (1, N, G) once first forward pass runs
 
         _step_count = 0
