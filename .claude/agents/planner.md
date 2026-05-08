@@ -63,7 +63,6 @@ You will always receive a task description. You may also receive a **Research Su
 
 - Do NOT write code, not even pseudocode with exact syntax
 - Do NOT modify any files
-- Maximum 3 files in scope per plan
 - Reference specific line numbers and function names when pointing to code
 - If the task is too large, split it and plan only the first part
 - Consider Orbit Wars game mechanics: turn-based, planets have production, fleets have travel time, actions are per-turn

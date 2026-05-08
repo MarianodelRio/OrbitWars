@@ -205,3 +205,31 @@ def test_advantage_normalization_all_same_no_nan():
 
     loss, result = compute_ppo_loss(model, batch, config)
     assert math.isfinite(result.total_loss)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="bfloat16 autocast requires CUDA")
+def test_ppo_loss_under_autocast_bfloat16():
+    device = "cuda"
+    model, _ = make_model_and_sampler()
+    model = model.to(device)
+    config = RLConfig(ppo_batch_size=4)
+    batch = make_random_batch(B=4)
+    batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
+
+    with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=True):
+        loss, result = compute_ppo_loss(model, batch, config)
+
+    assert torch.isfinite(loss), f"loss is not finite: {loss}"
+    assert math.isfinite(result.total_loss), f"result.total_loss is not finite: {result.total_loss}"
+    assert loss.requires_grad, "loss must require grad"
+    # backward must not raise
+    loss.backward()
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="torch.compile requires CUDA")
+def test_compile_smoke_state_dict_keys_unchanged():
+    model, _ = make_model_and_sampler()
+    original_keys = set(model.state_dict().keys())
+    model = model.to("cuda")
+    compiled = torch.compile(model, mode="reduce-overhead")
+    assert set(compiled.state_dict().keys()) == original_keys

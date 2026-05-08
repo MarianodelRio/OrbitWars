@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import dataclasses
+import functools
+import pickle
 
 import torch
 
@@ -23,6 +25,7 @@ except ImportError:
         def write(s, **kw): print(s)
 
 from training.utils.rl_config import RLConfig
+from training.envs.vec_orbit_env import VecOrbitWarsEnv
 from training.utils.checkpointing import CheckpointManager
 from training.utils.rl_metrics import RLMetricsLogger
 from training.rewards.potential import PotentialReward
@@ -33,6 +36,20 @@ from training.rl.ppo import compute_ppo_loss, PPOLossResult
 from bots.neural.planet_policy_model import PlanetPolicyModel, PlanetPolicyOutput
 from bots.neural.policy_sampler import PolicySampler
 from training.trainers.il_trainer import _safe_ce  # used for IL distillation minibatches
+
+
+def _make_orbit_env(sb_max_planets, sb_max_fleets, rw_kwargs, steps_per_episode):
+    """Module-level factory for VecOrbitWarsEnv workers.
+
+    All arguments are primitives so functools.partial of this function is
+    picklable under Windows spawn.
+    """
+    from bots.neural.state_builder import StateBuilder
+    from training.rewards.potential import PotentialReward
+    from training.envs.orbit_env import OrbitWarsEnv
+    state_builder = StateBuilder(max_planets=sb_max_planets, max_fleets=sb_max_fleets)
+    reward_fn = PotentialReward(**rw_kwargs)
+    return OrbitWarsEnv(state_builder, reward_fn, steps_per_episode)
 
 
 def _compute_kl_bc_coef(iteration: int, cfg) -> float:
@@ -63,6 +80,7 @@ class RLTrainer:
         self._optimizer = None
         self._lr_scheduler = None
         self._env: OrbitWarsEnv | None = None
+        self._vec_env: VecOrbitWarsEnv | None = None
         self._pool: OpponentPool | None = None
         self._sampler: PolicySampler | None = None
         self._reward_fn: PotentialReward | None = None
@@ -70,9 +88,13 @@ class RLTrainer:
         self._bc_model = None
         self._il_loader = None
         self._il_iter = None
+        self._use_amp: bool = False
+        self._amp_dtype = torch.float32
 
     def _setup(self) -> None:
         cfg = self.config
+        if cfg.n_envs < 1:
+            raise ValueError(f"n_envs must be >= 1, got {cfg.n_envs}")
         run_dir = cfg.run_dir
         (run_dir / "checkpoints").mkdir(parents=True, exist_ok=True)
         (run_dir / "metrics").mkdir(parents=True, exist_ok=True)
@@ -114,6 +136,35 @@ class RLTrainer:
 
         self._env = OrbitWarsEnv(self.state_builder, self._reward_fn, cfg.steps_per_episode)
 
+        if cfg.n_envs > 1:
+            _rw_kwargs = dict(
+                w_planets=cfg.w_planets,
+                w_production=cfg.w_production,
+                w_ships=cfg.w_ships,
+                gamma=cfg.gamma,
+                lam=cfg.reward_lambda,
+                r_terminal_win=cfg.r_terminal_win,
+                r_terminal_loss=cfg.r_terminal_loss,
+                r_terminal_margin_coef=cfg.r_terminal_margin_coef,
+                r_event_capture_enemy=cfg.r_event_capture_enemy,
+                r_event_capture_comet=cfg.r_event_capture_comet,
+                r_event_eliminate_opponent=cfg.r_event_eliminate_opponent,
+                r_event_lose_planet=cfg.r_event_lose_planet,
+                r_event_ships_wasted_coef=cfg.r_event_ships_wasted_coef,
+                r_explore=cfg.r_explore,
+                explore_iterations=cfg.explore_iterations,
+            )
+            _env_factory = functools.partial(
+                _make_orbit_env,
+                self.state_builder.max_planets,
+                self.state_builder.max_fleets,
+                _rw_kwargs,
+                cfg.steps_per_episode,
+            )
+            # _pool is not yet built — build a temporary pool reference here;
+            # actual opponent sampling deferred to after _pool is constructed.
+            self._vec_env_factory = _env_factory  # store for deferred init after pool is ready
+
         self._pool = OpponentPool(max_snapshots=cfg.max_snapshots)
         for opp_path in cfg.heuristic_opponents:
             name = opp_path.split(":")[-1]
@@ -125,6 +176,11 @@ class RLTrainer:
             bins=self.codec.BINS,
             max_planets=self.model.config.max_planets,
         )
+
+        if cfg.n_envs > 1:
+            _init_opponent_fns = [self._sample_picklable_opponent()[0] for _ in range(cfg.n_envs)]
+            self._vec_env = VecOrbitWarsEnv(cfg.n_envs, self._vec_env_factory, _init_opponent_fns)
+            print(f"[RLTrainer] VecOrbitWarsEnv initialized n_envs={cfg.n_envs}")
 
         self._buffer = RolloutBuffer(capacity=cfg.n_rollout_steps)
 
@@ -173,7 +229,40 @@ class RLTrainer:
                     self._il_loader = None
 
         torch.manual_seed(cfg.seed)
+        self._use_amp = cfg.use_amp and torch.device(cfg.device).type == "cuda"
+        if self._use_amp:
+            _amp_dtype_str = cfg.amp_dtype
+            self._amp_dtype = torch.bfloat16 if _amp_dtype_str == "bfloat16" else torch.float16
+        print(f"[RLTrainer] AMP enabled={self._use_amp}  dtype={self._amp_dtype}")
         self._best_mean_winrate = 0.0
+
+    def _sample_picklable_opponent(self) -> tuple:
+        """Sample an opponent that is picklable for use in VecOrbitWarsEnv workers.
+
+        Falls back to the first heuristic pool entry if the sampled opponent is
+        a closure (e.g. neural snapshot) that cannot be pickled.
+        """
+        fn, name = self._pool.sample(
+            self_play_prob=self.config.self_play_prob,
+            current_model_fn=self._current_model_as_agent(),
+            return_name=True,
+        )
+        try:
+            pickle.dumps(fn)
+            return (fn, name)
+        except Exception:
+            for entry in self._pool._entries:
+                try:
+                    candidate_fn = entry.get_agent()
+                    pickle.dumps(candidate_fn)
+                except Exception:
+                    continue
+                print(
+                    f"[RLTrainer] WARNING: sampled opponent '{name}' is not picklable for vec env; "
+                    f"falling back to '{entry.name}'"
+                )
+                return candidate_fn, entry.name
+            raise RuntimeError("No picklable opponents available for vec env")
 
     def _collect_rollout(self, iteration: int = 0) -> None:
         cfg = self.config
@@ -207,23 +296,24 @@ class RLTrainer:
 
             rl_masks = sampler.build_masks(state["context"], device=device)
 
-            with torch.no_grad():
-                output, new_hidden = self.model(pf, ff, fm, gf, pm, rt, hidden)
-                output_squeezed = PlanetPolicyOutput(
-                    action_type_logits=output.action_type_logits.squeeze(0),
-                    target_logits=output.target_logits.squeeze(0),
-                    amount_logits=output.amount_logits.squeeze(0),
-                    v_outcome=output.v_outcome.squeeze(0),
-                    v_score_diff=output.v_score_diff.squeeze(0),
-                    v_shaped=output.v_shaped.squeeze(0),
-                )
-                sample_result = sampler.sample(
-                    output_squeezed,
-                    rl_masks,
-                    state["context"],
-                    state["planet_features"],
-                    deterministic=False,
-                )
+            with torch.autocast(device_type=torch.device(cfg.device).type, dtype=self._amp_dtype, enabled=self._use_amp):
+                with torch.no_grad():
+                    output, new_hidden = self.model(pf, ff, fm, gf, pm, rt, hidden)
+                    output_squeezed = PlanetPolicyOutput(
+                        action_type_logits=output.action_type_logits.squeeze(0),
+                        target_logits=output.target_logits.squeeze(0),
+                        amount_logits=output.amount_logits.squeeze(0),
+                        v_outcome=output.v_outcome.squeeze(0),
+                        v_score_diff=output.v_score_diff.squeeze(0),
+                        v_shaped=output.v_shaped.squeeze(0),
+                    )
+                    sample_result = sampler.sample(
+                        output_squeezed,
+                        rl_masks,
+                        state["context"],
+                        state["planet_features"],
+                        deterministic=False,
+                    )
 
             next_state, reward, done, step_info = env.step(sample_result.game_actions)
             _step_count += 1
@@ -288,11 +378,208 @@ class RLTrainer:
             gf = torch.tensor(state["global_features"], dtype=torch.float32).unsqueeze(0).to(device)
             pm = torch.tensor(state["planet_mask"], dtype=torch.bool).unsqueeze(0).to(device)
             rt = torch.tensor(state["relational_tensor"], dtype=torch.float32).unsqueeze(0).to(device)
-            with torch.no_grad():
-                output, _ = self.model(pf, ff, fm, gf, pm, rt, hidden)
-                last_value = output.v_shaped.squeeze().item()
+            with torch.autocast(device_type=torch.device(cfg.device).type, dtype=self._amp_dtype, enabled=self._use_amp):
+                with torch.no_grad():
+                    output, _ = self.model(pf, ff, fm, gf, pm, rt, hidden)
+                    last_value = output.v_shaped.squeeze().item()
 
         self._buffer.compute_gae(last_value, cfg.gamma, cfg.gae_lambda)
+
+    def _collect_rollout_vec(self, iteration: int = 0) -> None:
+        """Collect a rollout using N parallel envs (VecOrbitWarsEnv).
+
+        GAE is computed per-env via compute_gae_vec to avoid boundary crossing.
+        """
+        cfg = self.config
+        device = cfg.device
+        buffer = self._buffer
+        vec_env = self._vec_env
+        sampler = self._sampler
+        n = cfg.n_envs
+
+        # Sample N picklable opponents and reset all envs
+        opp_pairs = [self._sample_picklable_opponent() for _ in range(n)]
+        opponent_fns = [p[0] for p in opp_pairs]
+        self._last_opp_name = opp_pairs[-1][1]
+        current_states = vec_env.reset(opponent_fns=opponent_fns)
+        hidden = None  # will be (h_n, c_n) of shape (1, N, G) once first forward pass runs
+
+        _step_count = 0
+        _launches_total = 0
+        _explore_active = getattr(self._reward_fn, "_explore_active", False)
+        last_env_added = 0
+
+        _rollout_bar = tqdm(total=cfg.n_rollout_steps, desc=f"Rollout(vec) iter={iteration}", leave=True)
+
+        while not buffer.is_full():
+            # --- Build batched tensors (N, ...) ---
+            pf_batch = torch.stack([
+                torch.tensor(s["planet_features"], dtype=torch.float32).to(device)
+                for s in current_states
+            ])
+            ff_batch = torch.stack([
+                torch.tensor(s["fleet_features"], dtype=torch.float32).to(device)
+                for s in current_states
+            ])
+            fm_batch = torch.stack([
+                torch.tensor(s["fleet_mask"], dtype=torch.bool).to(device)
+                for s in current_states
+            ])
+            gf_batch = torch.stack([
+                torch.tensor(s["global_features"], dtype=torch.float32).to(device)
+                for s in current_states
+            ])
+            pm_batch = torch.stack([
+                torch.tensor(s["planet_mask"], dtype=torch.bool).to(device)
+                for s in current_states
+            ])
+            rt_batch = torch.stack([
+                torch.tensor(s["relational_tensor"], dtype=torch.float32).to(device)
+                for s in current_states
+            ])
+
+            # Per-env action masks (context is per-env)
+            rl_masks_list = [sampler.build_masks(s["context"], device) for s in current_states]
+
+            # Save hidden BEFORE forward pass — this is the h_n/c_n stored in each RolloutStep
+            pre_hidden = hidden
+
+            # Batched forward pass
+            with torch.autocast(
+                device_type=torch.device(cfg.device).type,
+                dtype=self._amp_dtype,
+                enabled=self._use_amp,
+            ):
+                with torch.no_grad():
+                    output_batch, new_hidden = self.model(
+                        pf_batch, ff_batch, fm_batch, gf_batch, pm_batch, rt_batch, hidden
+                    )
+
+            # Per-env: squeeze output slice and sample action
+            sample_results = []
+            game_actions_list = []
+            for i in range(n):
+                output_i = PlanetPolicyOutput(
+                    action_type_logits=output_batch.action_type_logits[i],
+                    target_logits=output_batch.target_logits[i],
+                    amount_logits=output_batch.amount_logits[i],
+                    v_outcome=output_batch.v_outcome[i],
+                    v_score_diff=output_batch.v_score_diff[i],
+                    v_shaped=output_batch.v_shaped[i],
+                )
+                sr = sampler.sample(
+                    output_i,
+                    rl_masks_list[i],
+                    current_states[i]["context"],
+                    current_states[i]["planet_features"],
+                    deterministic=False,
+                )
+                sample_results.append(sr)
+                game_actions_list.append(sr.game_actions)
+
+            # Step all envs
+            step_results = vec_env.step(game_actions_list)
+            _step_count += 1
+
+            # Process per-env results
+            done_or_error = [False] * n
+            for i in range(n):
+                if buffer.is_full():
+                    break
+                state_i, reward_i, done_i, info_i = step_results[i]
+                is_error = bool(info_i.get("error")) and info_i.get("error_reason") == "env_error"
+
+                _launches_total += len(sample_results[i].game_actions)
+                _rollout_bar.update(1)
+
+                if is_error:
+                    current_states[i] = info_i.get("reset_state", state_i)
+                    done_or_error[i] = True
+                    continue
+
+                # Per-env pre-step hidden slice — shape (1, 1, G)
+                if pre_hidden is None:
+                    h_n_i = None
+                    c_n_i = None
+                else:
+                    h_n_i = pre_hidden[0][:, i:i+1, :].detach().cpu()
+                    c_n_i = pre_hidden[1][:, i:i+1, :].detach().cpu()
+
+                roll_step = RolloutStep(
+                    state=dict(current_states[i]),
+                    rl_masks=rl_masks_list[i],
+                    canonical=sample_results[i].canonical,
+                    log_prob_old=sample_results[i].log_prob.item(),
+                    value=sample_results[i].value.item(),
+                    reward=reward_i,
+                    done=done_i,
+                    terminal_reward=info_i.get("terminal_reward", 0.0),
+                    shaped_reward=info_i.get("shaped_reward", 0.0),
+                    player=0,
+                    step_count=info_i.get("step", 0),
+                    h_n=h_n_i,
+                    c_n=c_n_i,
+                    env_idx=i,
+                )
+                buffer.add(roll_step)
+                last_env_added = i
+
+                if done_i:
+                    done_or_error[i] = True
+                    current_states[i] = info_i["reset_state"]
+                else:
+                    current_states[i] = state_i
+
+            # Build next-iteration hidden: zero slices for done/error envs
+            if new_hidden is not None:
+                h_n_next = new_hidden[0].clone()
+                c_n_next = new_hidden[1].clone()
+                for i in range(n):
+                    if done_or_error[i]:
+                        with torch.no_grad():
+                            h_n_next[:, i, :].zero_()
+                            c_n_next[:, i, :].zero_()
+                hidden = (h_n_next, c_n_next)
+            else:
+                hidden = new_hidden
+
+        _rollout_bar.close()
+        self._last_launches_total = _launches_total
+        self._last_rollout_step_count = _step_count
+        self._last_explore_active = _explore_active
+
+        # Bootstrap value from the env that added the last buffer entry
+        if self._buffer._steps and self._buffer._steps[-1].done:
+            last_value = 0.0
+        else:
+            state_last = current_states[last_env_added]
+            pf = torch.tensor(state_last["planet_features"], dtype=torch.float32).unsqueeze(0).to(device)
+            ff = torch.tensor(state_last["fleet_features"], dtype=torch.float32).unsqueeze(0).to(device)
+            fm = torch.tensor(state_last["fleet_mask"], dtype=torch.bool).unsqueeze(0).to(device)
+            gf = torch.tensor(state_last["global_features"], dtype=torch.float32).unsqueeze(0).to(device)
+            pm = torch.tensor(state_last["planet_mask"], dtype=torch.bool).unsqueeze(0).to(device)
+            rt = torch.tensor(state_last["relational_tensor"], dtype=torch.float32).unsqueeze(0).to(device)
+            if hidden is None:
+                hidden_slice = None
+            else:
+                hidden_slice = (
+                    hidden[0][:, last_env_added:last_env_added+1, :],
+                    hidden[1][:, last_env_added:last_env_added+1, :],
+                )
+            with torch.autocast(
+                device_type=torch.device(cfg.device).type,
+                dtype=self._amp_dtype,
+                enabled=self._use_amp,
+            ):
+                with torch.no_grad():
+                    output, _ = self.model(pf, ff, fm, gf, pm, rt, hidden_slice)
+                    last_value = output.v_shaped.squeeze().item()
+
+        # Per-env bootstrap: only the env that added the last step has a meaningful last_value;
+        # all other envs bootstrap to 0 (they either completed an episode or will have their
+        # returns computed from within the rollout).
+        last_values = [last_value if i == last_env_added else 0.0 for i in range(n)]
+        buffer.compute_gae_vec(last_values, cfg.gamma, cfg.gae_lambda, n)
 
     def _ppo_update(self, iteration: int = 1, kl_bc_coef: float = 0.0) -> PPOLossResult:
         import random
@@ -328,14 +615,15 @@ class RLTrainer:
                     il_rt = il_batch.get("relational_tensor")
                     if il_rt is not None:
                         il_rt = il_rt.to(device)
-                    il_output, _ = self.model(il_pf, il_ff, il_fm, il_gf, il_pm, il_rt)
-                    # CE losses (flat, ignore_index=-1)
-                    B_il, P_il = il_at.shape
-                    il_loss = (
-                        _safe_ce(il_output.action_type_logits.view(B_il * P_il, -1), il_at.view(-1))
-                        + _safe_ce(il_output.target_logits.view(B_il * P_il, -1), il_ti.view(-1))
-                        + _safe_ce(il_output.amount_logits.view(B_il * P_il, -1), il_ab.view(-1))
-                    )
+                    with torch.autocast(device_type=torch.device(cfg.device).type, dtype=self._amp_dtype, enabled=self._use_amp):
+                        il_output, _ = self.model(il_pf, il_ff, il_fm, il_gf, il_pm, il_rt)
+                        # CE losses (flat, ignore_index=-1)
+                        B_il, P_il = il_at.shape
+                        il_loss = (
+                            _safe_ce(il_output.action_type_logits.view(B_il * P_il, -1), il_at.view(-1))
+                            + _safe_ce(il_output.target_logits.view(B_il * P_il, -1), il_ti.view(-1))
+                            + _safe_ce(il_output.amount_logits.view(B_il * P_il, -1), il_ab.view(-1))
+                        )
                     if not torch.isfinite(il_loss):
                         continue
                     il_loss.backward()
@@ -348,11 +636,12 @@ class RLTrainer:
                     continue
 
                 self._optimizer.zero_grad()
-                loss, result = compute_ppo_loss(
-                    self.model, batch, cfg,
-                    bc_model=self._bc_model,
-                    kl_bc_coef=kl_bc_coef,
-                )
+                with torch.autocast(device_type=torch.device(cfg.device).type, dtype=self._amp_dtype, enabled=self._use_amp):
+                    loss, result = compute_ppo_loss(
+                        self.model, batch, cfg,
+                        bc_model=self._bc_model,
+                        kl_bc_coef=kl_bc_coef,
+                    )
                 if not torch.isfinite(loss):
                     continue
                 loss.backward()
@@ -465,111 +754,123 @@ class RLTrainer:
 
         self.model.train()
 
-        for iteration in range(start_iter, cfg.total_iterations + 1):
-            self._reward_fn.notify_iteration(iteration)
-            self.model.train()
-            tqdm.write(f"\n[RLTrainer] ── iter {iteration}/{cfg.total_iterations} ──")
-            self._collect_rollout(iteration=iteration)
+        if cfg.use_compile and torch.device(cfg.device).type == "cuda":
+            self.model = torch.compile(self.model, mode="reduce-overhead")
+            print(f"[RLTrainer] torch.compile applied  mode=reduce-overhead")
 
-            kl_bc_coef = _compute_kl_bc_coef(iteration, cfg)
-            avg_ppo_result = self._ppo_update(iteration=iteration, kl_bc_coef=kl_bc_coef)
-            buffer_stats = self._buffer.episode_stats()
+        try:
+            for iteration in range(start_iter, cfg.total_iterations + 1):
+                self._reward_fn.notify_iteration(iteration)
+                self.model.train()
+                tqdm.write(f"\n[RLTrainer] ── iter {iteration}/{cfg.total_iterations} ──")
+                if cfg.n_envs == 1:
+                    self._collect_rollout(iteration=iteration)
+                else:
+                    self._collect_rollout_vec(iteration=iteration)
 
-            self._rl_metrics_logger.log_train(iteration, avg_ppo_result, buffer_stats)
-            self._buffer.clear()
+                kl_bc_coef = _compute_kl_bc_coef(iteration, cfg)
+                avg_ppo_result = self._ppo_update(iteration=iteration, kl_bc_coef=kl_bc_coef)
+                buffer_stats = self._buffer.episode_stats()
 
-            if self._lr_scheduler is not None:
-                self._lr_scheduler.step()
+                self._rl_metrics_logger.log_train(iteration, avg_ppo_result, buffer_stats)
+                self._buffer.clear()
 
-            if iteration % cfg.snapshot_every == 0:
-                path = self._ckpt_manager.save_snapshot(
-                    self.model, self.state_builder, self.codec, iteration
-                )
-                self._pool.add_snapshot(path, iteration)
-                tqdm.write(f"  [snapshot] saved → {path}  pool_size={self._pool.size()}  snapshots={len(self._pool._snapshot_entries)}")
+                if self._lr_scheduler is not None:
+                    self._lr_scheduler.step()
 
-            if iteration % cfg.save_every == 0:
-                metrics = {
-                    "policy_loss": avg_ppo_result.policy_loss,
-                    "value_loss": avg_ppo_result.value_loss,
-                    "entropy": avg_ppo_result.entropy,
-                }
-                self._ckpt_manager.save_rl_checkpoint(
-                    self.model,
-                    self._optimizer,
-                    self._lr_scheduler,
-                    self.state_builder,
-                    self.codec,
-                    iteration,
-                    metrics,
-                )
-
-            if iteration % cfg.eval_every == 0:
-                try:
-                    from training.evaluation.evaluator import Evaluator
-                    from bots.neural.bot import NeuralBot
-                    bot = NeuralBot(
-                        model=self.model,
-                        state_builder=self.state_builder,
-                        codec=self.codec,
-                        device=cfg.device,
+                if iteration % cfg.snapshot_every == 0:
+                    path = self._ckpt_manager.save_snapshot(
+                        self.model, self.state_builder, self.codec, iteration
                     )
-                    evaluator = Evaluator(
-                        bot=bot,
-                        opponents=cfg.eval_opponents,
-                        n_matches=cfg.n_eval_matches,
-                        run_dir=cfg.run_dir,
-                    )
-                    eval_results = evaluator.run(epoch=iteration)
-                    self._rl_metrics_logger.log_eval(iteration, eval_results)
-                    mean_winrate = sum(
-                        v.get("win_rate", 0.0) for v in eval_results.values()
-                    ) / max(len(eval_results), 1)
-                    tqdm.write(f"  [eval] iter={iteration} mean_win_rate={mean_winrate:.3f}")
-                    for _opp, _res in eval_results.items():
-                        tqdm.write(
-                            f"    vs {_opp}: win={_res.get('win_rate', 0.0):.2f} "
-                            f"draw={_res.get('draw_rate', 0.0):.2f} "
-                            f"loss={_res.get('loss_rate', 0.0):.2f} "
-                            f"score_neural={_res.get('avg_score_neural', 0.0):.1f} "
-                            f"score_opp={_res.get('avg_score_opponent', 0.0):.1f} "
-                            f"avg_game_length={_res.get('avg_game_length', 'N/A')}"
-                        )
-                    if mean_winrate > self._best_mean_winrate:
-                        self._best_mean_winrate = mean_winrate
-                        best_metrics = {
-                            "policy_loss": avg_ppo_result.policy_loss,
-                            "value_loss": avg_ppo_result.value_loss,
-                            "entropy": avg_ppo_result.entropy,
-                        }
-                        self._ckpt_manager.save_rl_checkpoint(
-                            self.model,
-                            self._optimizer,
-                            self._lr_scheduler,
-                            self.state_builder,
-                            self.codec,
-                            iteration,
-                            best_metrics,
-                            is_best_winrate=True,
-                        )
-                except Exception as e:
-                    tqdm.write(f"[RLTrainer] Eval failed at iteration {iteration}: {e}")
+                    self._pool.add_snapshot(path, iteration)
+                    tqdm.write(f"  [snapshot] saved → {path}  pool_size={self._pool.size()}  snapshots={len(self._pool._snapshot_entries)}")
 
-            tqdm.write(
-                f"  [summary] iter={iteration}/{cfg.total_iterations} "
-                f"opp={getattr(self, '_last_opp_name', '?')} "
-                f"π={avg_ppo_result.policy_loss:.4f} V={avg_ppo_result.value_loss:.4f} "
-                f"H={avg_ppo_result.entropy:.4f} KL={avg_ppo_result.approx_kl:.4f} "
-                f"clip={avg_ppo_result.clip_fraction:.3f} kl_bc={avg_ppo_result.kl_bc:.4f}\n"
-                f"         episodes={buffer_stats['n_episodes']} "
-                f"win_rate={buffer_stats.get('win_rate', 0.0):.2f} "
-                f"mean_ep_len={buffer_stats.get('mean_ep_length', 0.0):.1f} "
-                f"mean_ep_rew={buffer_stats['mean_ep_reward']:.4f} "
-                f"shaped={buffer_stats.get('mean_shaped_reward', 0.0):.4f} "
-                f"terminal={buffer_stats.get('mean_terminal_reward', 0.0):.4f}\n"
-                f"         adv_mean={buffer_stats.get('adv_mean', 0.0):.4f} "
-                f"adv_std={buffer_stats.get('adv_std', 0.0):.4f} "
-                f"ret_mean={buffer_stats.get('ret_mean', 0.0):.4f} "
-                f"ret_std={buffer_stats.get('ret_std', 0.0):.4f} "
-                f"mean_value={buffer_stats.get('mean_value', 0.0):.4f}"
-            )
+                if iteration % cfg.save_every == 0:
+                    metrics = {
+                        "policy_loss": avg_ppo_result.policy_loss,
+                        "value_loss": avg_ppo_result.value_loss,
+                        "entropy": avg_ppo_result.entropy,
+                    }
+                    self._ckpt_manager.save_rl_checkpoint(
+                        self.model,
+                        self._optimizer,
+                        self._lr_scheduler,
+                        self.state_builder,
+                        self.codec,
+                        iteration,
+                        metrics,
+                    )
+
+                if iteration % cfg.eval_every == 0:
+                    try:
+                        from training.evaluation.evaluator import Evaluator
+                        from bots.neural.bot import NeuralBot
+                        bot = NeuralBot(
+                            model=self.model,
+                            state_builder=self.state_builder,
+                            codec=self.codec,
+                            device=cfg.device,
+                        )
+                        evaluator = Evaluator(
+                            bot=bot,
+                            opponents=cfg.eval_opponents,
+                            n_matches=cfg.n_eval_matches,
+                            run_dir=cfg.run_dir,
+                        )
+                        eval_results = evaluator.run(epoch=iteration)
+                        self._rl_metrics_logger.log_eval(iteration, eval_results)
+                        mean_winrate = sum(
+                            v.get("win_rate", 0.0) for v in eval_results.values()
+                        ) / max(len(eval_results), 1)
+                        tqdm.write(f"  [eval] iter={iteration} mean_win_rate={mean_winrate:.3f}")
+                        for _opp, _res in eval_results.items():
+                            tqdm.write(
+                                f"    vs {_opp}: win={_res.get('win_rate', 0.0):.2f} "
+                                f"draw={_res.get('draw_rate', 0.0):.2f} "
+                                f"loss={_res.get('loss_rate', 0.0):.2f} "
+                                f"score_neural={_res.get('avg_score_neural', 0.0):.1f} "
+                                f"score_opp={_res.get('avg_score_opponent', 0.0):.1f} "
+                                f"avg_game_length={_res.get('avg_game_length', 'N/A')}"
+                            )
+                        if mean_winrate > self._best_mean_winrate:
+                            self._best_mean_winrate = mean_winrate
+                            best_metrics = {
+                                "policy_loss": avg_ppo_result.policy_loss,
+                                "value_loss": avg_ppo_result.value_loss,
+                                "entropy": avg_ppo_result.entropy,
+                            }
+                            self._ckpt_manager.save_rl_checkpoint(
+                                self.model,
+                                self._optimizer,
+                                self._lr_scheduler,
+                                self.state_builder,
+                                self.codec,
+                                iteration,
+                                best_metrics,
+                                is_best_winrate=True,
+                            )
+                    except Exception as e:
+                        tqdm.write(f"[RLTrainer] Eval failed at iteration {iteration}: {e}")
+
+                tqdm.write(
+                    f"  [summary] iter={iteration}/{cfg.total_iterations} "
+                    f"opp={getattr(self, '_last_opp_name', '?')} "
+                    f"π={avg_ppo_result.policy_loss:.4f} V={avg_ppo_result.value_loss:.4f} "
+                    f"H={avg_ppo_result.entropy:.4f} KL={avg_ppo_result.approx_kl:.4f} "
+                    f"clip={avg_ppo_result.clip_fraction:.3f} kl_bc={avg_ppo_result.kl_bc:.4f}\n"
+                    f"         episodes={buffer_stats['n_episodes']} "
+                    f"win_rate={buffer_stats.get('win_rate', 0.0):.2f} "
+                    f"mean_ep_len={buffer_stats.get('mean_ep_length', 0.0):.1f} "
+                    f"mean_ep_rew={buffer_stats['mean_ep_reward']:.4f} "
+                    f"shaped={buffer_stats.get('mean_shaped_reward', 0.0):.4f} "
+                    f"terminal={buffer_stats.get('mean_terminal_reward', 0.0):.4f}\n"
+                    f"         adv_mean={buffer_stats.get('adv_mean', 0.0):.4f} "
+                    f"adv_std={buffer_stats.get('adv_std', 0.0):.4f} "
+                    f"ret_mean={buffer_stats.get('ret_mean', 0.0):.4f} "
+                    f"ret_std={buffer_stats.get('ret_std', 0.0):.4f} "
+                    f"mean_value={buffer_stats.get('mean_value', 0.0):.4f}"
+                )
+        finally:
+            if self._vec_env is not None:
+                self._vec_env.close()
+                self._vec_env = None

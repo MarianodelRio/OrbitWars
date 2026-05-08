@@ -104,5 +104,4 @@ Incorporate the Advisor's recommendation into your Research Findings as the auth
 - Do NOT invent findings — if external search returns nothing useful, say so and recommend based on first principles
 - Be specific: name the algorithm, the heuristic, the formula — not "use a smarter strategy"
 - If multiple approaches exist and the choice is non-obvious, escalate to the Advisor rather than guessing
-- Keep scope realistic: the project runs max 3 files per cycle
 - If the task doesn't need research (obvious fix or refactor), say so clearly in your output so the orchestrator knows

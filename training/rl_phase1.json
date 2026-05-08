@@ -69,5 +69,9 @@
   "eval_every": 25,
   "n_eval_matches": 20,
   "eval_opponents": ["heuristic.baseline", "heuristic.sniper", "scoring.bot", "heuristic.oracle_sniper"],
-  "save_every": 50
+  "save_every": 50,
+  "use_amp": true,
+  "amp_dtype": "bfloat16",
+  "use_compile": true,
+  "n_envs": 3
 }

@@ -93,6 +93,12 @@ class RLConfig:
     entropy_coef_target: float = 0.005
     entropy_coef_amount: float = 0.005
 
+    # AMP / mixed-precision
+    use_amp: bool = True
+    amp_dtype: str = "bfloat16"
+    # torch.compile
+    use_compile: bool = True
+
     @classmethod
     def from_json(cls, path: Path) -> "RLConfig":
         with open(path, "r") as f:

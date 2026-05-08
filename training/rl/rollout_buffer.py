@@ -27,6 +27,7 @@ class RolloutStep:
     ret: float = 0.0
     h_n: Optional[torch.Tensor] = None   # (1, 1, G) hidden state before this step
     c_n: Optional[torch.Tensor] = None   # (1, 1, G) cell state before this step
+    env_idx: int = 0                     # which parallel env produced this step (0 = single-env compat)
 
 
 class RolloutBuffer:
@@ -48,6 +49,26 @@ class RolloutBuffer:
     def compute_gae(self, last_value: float, gamma: float, gae_lambda: float) -> None:
         from training.rl.gae import compute_gae as _compute_gae
         _compute_gae(self._steps, last_value, gamma, gae_lambda)
+
+    def compute_gae_vec(
+        self,
+        last_values: list,
+        gamma: float,
+        gae_lambda: float,
+        n_envs: int,
+    ) -> None:
+        """Compute GAE per-env to avoid crossing env boundaries in backward iteration.
+
+        Splits self._steps by env_idx, runs GAE on each sub-list in place,
+        then the original self._steps objects are already updated (same references).
+        """
+        from training.rl.gae import compute_gae as _compute_gae
+        per_env: list[list] = [[] for _ in range(n_envs)]
+        for step in self._steps:
+            per_env[step.env_idx].append(step)
+        for i in range(n_envs):
+            if per_env[i]:
+                _compute_gae(per_env[i], last_values[i], gamma, gae_lambda)
 
     def episode_stats(self) -> dict:
         n_episodes = 0
