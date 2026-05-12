@@ -3,7 +3,7 @@
   "run_id": "",
   "device": "auto",
   "seed": 42,
-  "total_iterations": 500,
+  "total_iterations": 750,
 
   "model_config": {
     "Dp": 24, "Df": 16, "Dg": 16,
@@ -18,7 +18,7 @@
   "steps_per_episode": 500,
   "ppo_epochs": 4,
   "ppo_batch_size": 512,
-  "clip_eps": 0.2,
+  "clip_eps": 0.15,
   "value_clip_eps": 0.2,
   "vf_coef": 0.5,
   "max_grad_norm": 0.5,
@@ -43,9 +43,9 @@
   "r_explore": 0.0,
   "explore_iterations": 0,
 
-  "entropy_coef_action_type": 0.002,
-  "entropy_coef_target": 0.001,
-  "entropy_coef_amount": 0.0005,
+  "entropy_coef_action_type": 0.008,
+  "entropy_coef_target": 0.004,
+  "entropy_coef_amount": 0.002,
 
   "self_play_prob": 0.15,
   "heuristic_opponents": [
@@ -61,7 +61,7 @@
   "bc_policy_path": "runs/rl_phase2_mixed/run_001/checkpoints/rl_best_winrate.pt",
   "kl_bc_coef_start": 0.15,
   "kl_bc_coef_end": 0.03,
-  "kl_bc_coef_decay_iters": 250,
+  "kl_bc_coef_decay_iters": 400,
   "il_data_cache_path": "",
   "il_distill_ratio": 0.0,
 
