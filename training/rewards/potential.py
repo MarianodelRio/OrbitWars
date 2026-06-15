@@ -18,6 +18,7 @@ class PotentialReward:
         r_terminal_margin_coef: float = 5.0,
         r_event_capture_enemy: float = 0.5,
         r_event_capture_comet: float = 0.2,
+        r_event_capture_neutral: float = 0.0,
         r_event_eliminate_opponent: float = 1.0,
         r_event_lose_planet: float = -0.3,
         r_event_ships_wasted_coef: float = 0.0,
@@ -34,6 +35,7 @@ class PotentialReward:
         self.r_terminal_margin_coef = r_terminal_margin_coef
         self.r_event_capture_enemy = r_event_capture_enemy
         self.r_event_capture_comet = r_event_capture_comet
+        self.r_event_capture_neutral = r_event_capture_neutral
         self.r_event_eliminate_opponent = r_event_eliminate_opponent
         self.r_event_lose_planet = r_event_lose_planet
         self.r_event_ships_wasted_coef = r_event_ships_wasted_coef
@@ -129,6 +131,8 @@ class PotentialReward:
                 total += self.r_event_capture_comet
             elif prev_owner >= 0:
                 total += self.r_event_capture_enemy
+            else:
+                total += self.r_event_capture_neutral
 
         for p in prev_obs.get("planets", []):
             if p[1] == player:

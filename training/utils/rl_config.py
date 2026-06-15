@@ -26,6 +26,7 @@ class RLConfig:
     ent_coef: float = 0.01
     max_grad_norm: float = 0.5
     lr: float = 3e-4
+    weight_decay: float = 1e-4
     normalize_advantages: bool = True
 
     # GAE
@@ -42,6 +43,7 @@ class RLConfig:
     r_terminal_margin_coef: float = 5.0
     r_event_capture_enemy: float = 0.5
     r_event_capture_comet: float = 0.2
+    r_event_capture_neutral: float = 0.2
     r_event_eliminate_opponent: float = 1.0
     r_event_lose_planet: float = -0.3
     r_event_ships_wasted_coef: float = 0.0

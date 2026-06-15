@@ -103,7 +103,7 @@ class RLTrainer:
         self._ckpt_manager = CheckpointManager(run_dir)
         self._rl_metrics_logger = RLMetricsLogger(run_dir)
 
-        self._optimizer = torch.optim.Adam(self.model.parameters(), lr=cfg.lr)
+        self._optimizer = torch.optim.AdamW(self.model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
 
         if cfg.lr_schedule == "cosine":
             from torch.optim.lr_scheduler import CosineAnnealingLR
@@ -126,6 +126,7 @@ class RLTrainer:
             r_terminal_margin_coef=cfg.r_terminal_margin_coef,
             r_event_capture_enemy=cfg.r_event_capture_enemy,
             r_event_capture_comet=cfg.r_event_capture_comet,
+            r_event_capture_neutral=cfg.r_event_capture_neutral,
             r_event_eliminate_opponent=cfg.r_event_eliminate_opponent,
             r_event_lose_planet=cfg.r_event_lose_planet,
             r_event_ships_wasted_coef=cfg.r_event_ships_wasted_coef,
@@ -147,6 +148,7 @@ class RLTrainer:
                 r_terminal_margin_coef=cfg.r_terminal_margin_coef,
                 r_event_capture_enemy=cfg.r_event_capture_enemy,
                 r_event_capture_comet=cfg.r_event_capture_comet,
+                r_event_capture_neutral=cfg.r_event_capture_neutral,
                 r_event_eliminate_opponent=cfg.r_event_eliminate_opponent,
                 r_event_lose_planet=cfg.r_event_lose_planet,
                 r_event_ships_wasted_coef=cfg.r_event_ships_wasted_coef,

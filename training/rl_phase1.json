@@ -3,7 +3,7 @@
   "run_id": "",
   "device": "auto",
   "seed": 42,
-  "total_iterations": 300,
+  "total_iterations": 400,
 
   "model_config": {
     "Dp": 24, "Df": 16, "Dg": 16,
@@ -19,9 +19,10 @@
   "ppo_epochs": 3,
   "ppo_batch_size": 256,
   "clip_eps": 0.2,
-  "value_clip_eps": 0.2,
+  "value_clip_eps": null,
   "vf_coef": 0.5,
-  "max_grad_norm": 1.0,
+  "max_grad_norm": 0.5,
+  "weight_decay": 0.0001,
   "lr": 0.0002,
   "lr_schedule": "cosine",
   "normalize_advantages": true,
@@ -36,6 +37,7 @@
   "r_terminal_win": 10.0,
   "r_terminal_loss": -10.0,
   "r_terminal_margin_coef": 2.0,
+  "r_event_capture_neutral": 0.2,
   "r_event_capture_enemy": 0.5,
   "r_event_capture_comet": 0.2,
   "r_event_eliminate_opponent": 1.0,
@@ -59,9 +61,9 @@
   "snapshot_every": 50,
 
   "bc_policy_path": "runs/planet_policy_il_v3/run_001/checkpoints/best.pt",
-  "kl_bc_coef_start": 0.03,
+  "kl_bc_coef_start": 0.05,
   "kl_bc_coef_end": 0.005,
-  "kl_bc_coef_decay_iters": 50,
+  "kl_bc_coef_decay_iters": 150,
 
   "il_data_cache_path": "data/cache/il_planet_policy.h5",
   "il_distill_ratio": 0.0,

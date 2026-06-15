@@ -156,6 +156,8 @@ source .venv/bin/activate
 
 Requirements: Python 3.10+, PyTorch ≥ 2.0, `kaggle-environments`, `h5py`, `numpy`.
 
+**Hardware note:** RL training was run on a GCP compute instance with an NVIDIA L4 GPU (24 GB VRAM). The RL loop is CPU-bound (rollout collection via `kaggle_environments`), so a machine with multiple vCPUs matters more than GPU tier. `setup.sh` auto-detects the CUDA driver version and installs the correct PyTorch wheel.
+
 ---
 
 ## Usage
