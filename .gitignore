@@ -17,7 +17,12 @@ build/
 tournament/results/*
 !tournament/results/.gitkeep
 
-# Data
+# Data and model outputs
 data/
-
 runs/
+*.pt
+*.pth
+
+# Local / per-machine config
+.claude/settings.local.json
+pendiente.md
